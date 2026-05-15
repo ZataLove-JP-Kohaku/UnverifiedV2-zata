@@ -7,6 +7,7 @@
 // @license      Proprietary License
 // @author       wytlines, DeadFish7, andreypidd, jet, joudaALT!
 // @match        https://miniblox.io/*
+// @match        https://miniblox.online/*
 // @match        https://miniblox.org/*
 // @match        https://miniblox.com/*
 // @match        https://blockcraft.io/*
@@ -1490,3 +1491,4 @@ class UnverifiedShortcutMenu {
   window.requestAnimationFrame = function(callback) { return setTimeout(function() { callback(performance.now()); }, 0); };
   console.log('Client Status: Great');
 })();
+// ***** *****
