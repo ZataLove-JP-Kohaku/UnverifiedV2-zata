@@ -9,7 +9,7 @@
 // @match        https://miniblox.online/*
 // @match        https://miniblox.org/*
 // @match        https://miniblox.com/*
-// @match        https://blockcraft.io/*
+// @match        https://www.xbitlabs.com/ja/*
 // @icon         https://miniblox.io/favicon.png
 // @grant        none
 // ==/UserScript==
@@ -356,7 +356,7 @@ class UnverifiedStyler {
 class UnverifiedBackground {
   constructor() {
 		this.bgObserver = null;
-		this.bg1 = "https://raw.githubusercontent.com/juggernautkohaku-cell/my-pvp-pack/refs/heads/main/DEBUG/default.png";
+		this.bg1 = "https://i.ytimg.com/vi/XSjfRXOGcvA/maxresdefault.jpg";
 		this.currentBG = this.bg1;
 	}
 	setBG(e) {
@@ -1488,7 +1488,7 @@ document.addEventListener("mouseup", () => {
         { name: "Minors??!!", image: "https://media1.tenor.com/m/mn2d2liDsmUAAAAC/ichigo-bleach.gif" },
         { name: "Beach", image: "https://wallpaperaccess.com/full/174768.jpg" },
         { name: "Fall", image: "https://wallpaperaccess.com/full/185084.jpg" },
-        { name: "Ocean", image: "https://wallpaperaccess.com/full/317501.jpg" }
+        { name: "Swight", image: "https://skin.laby.net/api/v3/render/bust/ebd7af32-759e-41e2-b227-9eeb8576d609.png?shadowBlur=true&width=256&height=256" }
     ];
 
 
