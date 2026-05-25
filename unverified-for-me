@@ -8,6 +8,8 @@
 // @match        https://miniblox.io/*
 // @match        https://miniblox.online/*
 // @match        https://miniblox.org/*
+// @match        https://scratch.mit.edu/*
+// @match        https://turbowarp.org/*
 // @match        https://miniblox.com/*
 // @match        https://www.xbitlabs.com/ja/*
 // @icon         https://miniblox.io/favicon.png
@@ -69,7 +71,7 @@ class UnverifiedIntro {
 		this.container.appendChild(this.unverifiedText);
 
 		this.creditsText = document.createElement("div");
-		this.creditsText.textContent = "@Miniblox!";
+		this.creditsText.textContent = "@ZataLove_JP_Kohaku";
 		Object.assign(this.creditsText.style, {
 			color: "red", fontSize: "30px", opacity: 0, transition: "opacity 0.8s ease",
 			whiteSpace: 'pre-line',
@@ -112,7 +114,7 @@ class UnverifiedIntro {
 	showInitializedNotif() {
     const initializedNotification = document.createElement("div");
     initializedNotification.classList.add('initialized-notification');
-    initializedNotification.textContent = "UnverifiedV2 Initialized";
+    initializedNotification.textContent = "UnverifiedV2 Zata Initialized";
     document.body.appendChild(initializedNotification);
     setTimeout(() => {
         initializedNotification.style.top = "10px";
@@ -146,21 +148,21 @@ class UnverifiedStyler {
 			'.css-aznra0',
 		];
 		this.generalStylingSelectors = new Set([
-			'.chakra-button.css-cuh8pi',  // play button
-			'.chakra-button.css-32lhf4',  // left menu buttons
-			'.chakra-button.css-5ov7ui',  // signin button, box, ingame menu button
+			'.chakra-button.css-cuh8pi', // play button
+			'.chakra-button.css-32lhf4', // left menu buttons
+			'.chakra-button.css-5ov7ui', // signin button, box, ingame menu button
 			'.chakra-button.css-18wnugv', // customize button
-			'.chakra-button.css-he6upe',  // daily button
-			'.chakra-button.css-1oxqv3t',  // daily ready button
+			'.chakra-button.css-he6upe', // daily button
+			'.chakra-button.css-1oxqv3t', // daily ready button
 			'.chakra-button.css-1dkorm4', // free coin button
-			'.css-10y588r',               // user info box
+			'.css-10y588r',             // user info box
 			'button.chakra-button.css-livqej', // leave game button
 			'button.chakra-button.css-1jg2qv0', // Settings done button
-			'div.css-aidfhd',             // Dressing room profile
+			'div.css-aidfhd',            // Dressing room profile
 			'div.css-1kd330l',            // Dressing room buttons
 			'button.chakra-button.css-14mkusw', // planet buttons
 			'button.chakra-button.css-8q1apo',  // back button
-			'.css-1a6laq6',               // sliders outer part
+			'.css-1a6laq6',              // sliders outer part
 			'button.chakra-button.css-1axaj8o',  // invite+exit quick-launch buttons
 			'button.chakra-button.css-xircll',  // left menu back button
 			'.css-1xy2x8',   						  // dressing room epic skins
@@ -188,12 +190,12 @@ class UnverifiedStyler {
 			'.css-1f34n7d', 	          // daily login reward small
 			'.css-tncl4j', 	          // daily login reward large
 			'.css-1tyymsb', 	          // daily login today reward
-			'.css-ol7umz', 	          // daily login tomorrow? reward
+			'.css-ol7umz',         // daily login tomorrow? reward
 			'.chakra-button.css-12t4nq4', 	          // daily login next reward
 		]);
 		this.specificStylingSelectors = new Map([
 			['button.chakra-button.css-1axaj8o', e => { e.style.fontSize = '24px'; e.style.padding = '1px 1px' }],  // invite+exit quick-launch buttons
-			['.chakra-button.css-cuh8pi', e => { e.style.fontSize = '20px' }],                            // play button
+			['.chakra-button.css-cuh8pi', e => { e.style.fontSize = '20px' }],                           // play button
 			['.css-1xy2x8', e => { e.style.border = '2px solid purple'; e.style.padding = '0 10px' }],     // dressing room epic skins
 			['.css-i1x0qw', e => { e.style.border = '2px solid green'; e.style.padding = '0 10px' }],     // dressing room rare skins
 			['.css-jnnvp4', e => { e.style.border = '2px solid yellow'; e.style.padding = '0 10px' }],    // dressing room legendary skins
@@ -356,7 +358,7 @@ class UnverifiedStyler {
 class UnverifiedBackground {
   constructor() {
 		this.bgObserver = null;
-		this.bg1 = "https://i.ytimg.com/vi/XSjfRXOGcvA/maxresdefault.jpg";
+		this.bg1 = "https://raw.githubusercontent.com/juggernautkohaku-cell/my-pvp-pack/refs/heads/main/DEBUG/default.png";
 		this.currentBG = this.bg1;
 	}
 	setBG(e) {
@@ -368,7 +370,7 @@ class UnverifiedBackground {
 class UnverifiedBanner {
   constructor() {
 		this.e = document.createElement('div');
-		this.e.textContent = 'UnverifiedV2\n\nBy @Miniblox!'
+		this.e.textContent = 'UnverifiedV2-Zata\n\nBy @ZataLove_JP_Kohaku!'
 		this.e.id = 'unverified-banner';
 		this.e.style.whiteSpace = 'pre-line';
 		this.e.style.textAlign = 'center';
@@ -419,27 +421,27 @@ class UnverifiedBanner {
 class UnverifiedShortcutMenu {
 	constructor() {
 		this.onclicks = [
-			() => {  // Kit
+			() => { // Kit
 				this.getPlayButton().click();
 				setTimeout(() => this.getKitPVPButton().click(), 70);
 				document.body.removeChild(this.container);
 			},
-			() => {  // Sky
+			() => { // Sky
 				this.getPlayButton().click();
 				setTimeout(() => this.getSkywarsButton().click(), 70);
 				document.body.removeChild(this.container);
 			},
-			() => {  // Doubles
+			() => { // Doubles
 				this.getPlayButton().click();
 				setTimeout(() => this.getDoublesButton().click(), 70);
 				document.body.removeChild(this.container);
 			},
-			() => {  // Quads
+			() => { // Quads
 				this.getPlayButton().click();
 				setTimeout(() => this.getQuadsButton().click(), 70);
 				document.body.removeChild(this.container);
 			},
-			() => {  // Classic
+			() => { // Classic
 				this.getPlayButton().click();
 				setTimeout(() => this.getClassicPVPButton().click(), 70);
 				document.body.removeChild(this.container);
@@ -716,7 +718,7 @@ class UnverifiedShortcutMenu {
 
         const tooltip = document.createElement("div");
         tooltip.classList.add("module-tooltip");
-        tooltip.textContent = `right-click to bind`;
+        tooltip.textContent = `right-click to open key bind`;
         moduleContainer.appendChild(tooltip);
 
         let isActive = false;
@@ -742,10 +744,10 @@ class UnverifiedShortcutMenu {
 
                 if (isActive) {
                     moduleContainer.style.border = "5px solid #2ecc71";
-                    showNotification(`${name} was turned on`, true);
+                    showNotification(`Zata-${name} was turned on`, true);
                 } else {
                     moduleContainer.style.border = "5px solid transparent";
-                    showNotification(`${name} was turned off`, false);
+                    showNotification(`Zata-${name} was turned off`, false);
                 }
             }
         });
@@ -790,11 +792,11 @@ class UnverifiedShortcutMenu {
         document.body.appendChild(popup);
 
         const popupTitle = document.createElement("h3");
-        popupTitle.textContent = `Bind Key for ${moduleName}`;
+        popupTitle.textContent = `Zata-Bind Key for ${moduleName}`;
         popup.appendChild(popupTitle);
 
         const inputBox = document.createElement("input");
-        inputBox.placeholder = "Press a key...";
+        inputBox.placeholder = "Press a key😁";
         if (moduleBindings[moduleName]) {
             inputBox.value = moduleBindings[moduleName];
         }
@@ -1057,8 +1059,8 @@ if (fpsModule) {
       fpsElement.style.position = "fixed";
       fpsElement.style.top = "120px";
       fpsElement.style.left = "20px";
-      fpsElement.style.background = "rgba(0, 0, 0, 0.8)";
-      fpsElement.style.color = "#ffffff";
+      fpsElement.style.background = "rgba(255, 255, 255, 0.8)";
+      fpsElement.style.color = "#000000";
       fpsElement.style.fontSize = "14px";
       fpsElement.style.fontFamily = "monospace";
       fpsElement.style.padding = "8px 12px";
@@ -1137,8 +1139,8 @@ cpsModule.addEventListener("click", () => {
             cpsElement.style.position = "fixed";
             cpsElement.style.top = "20px";
             cpsElement.style.left = "20px";
-            cpsElement.style.color = "white";
-            cpsElement.style.backgroundColor = "rgba(0, 0, 0, 0.6)";
+            cpsElement.style.color = "#000000";
+            cpsElement.style.backgroundColor = "rgba(255, 255, 255, 0.6)";
             cpsElement.style.padding = "10px 15px";
             cpsElement.style.borderRadius = "8px";
             cpsElement.style.fontSize = "18px";
@@ -1230,8 +1232,8 @@ pingModule.addEventListener("click", () => {
         pingElement.style.top = "20px";
         pingElement.style.left = "20px";
         pingElement.style.padding = "8px 12px";
-        pingElement.style.backgroundColor = "rgba(0, 0, 0, 0.6)";
-        pingElement.style.color = "white";
+        pingElement.style.backgroundColor = "rgba(255, 255, 255, 0.6)";
+        pingElement.style.color = "#000000";
         pingElement.style.fontWeight = "bold";
         pingElement.style.fontFamily = "monospace";
         pingElement.style.borderRadius = "8px";
@@ -1270,7 +1272,7 @@ pingModule.addEventListener("click", () => {
             fetch(window.location.href, { method: 'HEAD', cache: "no-cache" }).then(() => {
                 const end = Date.now();
                 const ping = end - start;
-                pingElement.textContent = `Ping: ${ping}`;  // No "ms" here
+                pingElement.textContent = `Ping: ${ping}`; // No "ms" here
             }).catch(() => {
                 pingElement.textContent = `Ping: N/A`;
             });
@@ -1406,8 +1408,8 @@ if (timeModule) {
             timeElement.style.position = "fixed";
             timeElement.style.bottom = "20px";
             timeElement.style.right = "20px";
-            timeElement.style.backgroundColor = "rgba(0, 0, 0, 0.7)";
-            timeElement.style.color = "white";
+            timeElement.style.backgroundColor = "rgba(255, 255, 255, 0.7)";
+            timeElement.style.color = "#000000";
             timeElement.style.padding = "10px 15px";
             timeElement.style.borderRadius = "8px";
             timeElement.style.fontSize = "18px";
@@ -1461,7 +1463,7 @@ document.addEventListener("mouseup", () => {
 
     const closeButton = document.createElement("button");
     closeButton.textContent = "Close UI";
-    closeButton.style.backgroundColor = "#e74c3c";
+    closeButton.style.backgroundColor = "#923ce7";
     closeButton.style.color = "white";
     closeButton.style.border = "none";
     closeButton.style.borderRadius = "5px";
@@ -1473,7 +1475,7 @@ document.addEventListener("mouseup", () => {
 
     const ThemesDropdown = document.createElement("select");
 
-    ThemesDropdown.style.backgroundColor = "#e74c3c";
+    ThemesDropdown.style.backgroundColor = "#923ce7";
     ThemesDropdown.style.color = "white";
     ThemesDropdown.style.border = "none";
     ThemesDropdown.style.borderRadius = "5px";
@@ -1484,11 +1486,11 @@ document.addEventListener("mouseup", () => {
 
 
     const themes = [
-        { name: "Default", image: "#1a1a1a" },
-        { name: "Minors??!!", image: "https://media1.tenor.com/m/mn2d2liDsmUAAAAC/ichigo-bleach.gif" },
-        { name: "Beach", image: "https://wallpaperaccess.com/full/174768.jpg" },
-        { name: "Fall", image: "https://wallpaperaccess.com/full/185084.jpg" },
-        { name: "Swight", image: "https://skin.laby.net/api/v3/render/bust/ebd7af32-759e-41e2-b227-9eeb8576d609.png?shadowBlur=true&width=256&height=256" }
+        { name: "Default", image: "#000000" },
+        { name: "Swight", image: "https://i.ytimg.com/vi/AmGNfyzwa3Y/maxresdefault.jpg" },
+        { name: "ItzRealMe", image: "https://i.ytimg.com/vi/jxCybPOk--I/oar2.jpg?sqp=-oaymwEYCNAFENAFSFqQAgHyq4qpAwcIARUAAIhC&rs=AOn4CLCcGC-Wf2oXHgopoPahACjiufsx-A" },
+        { name: "Marlowww", image: "https://th.bing.com/th/id/OIP.8ab72Ed2gvBN3tpVWjpYlwAAAA?w=108&h=108&c=1&bgcl=7213b1&r=0&o=7&dpr=1.5&pid=ImgRC&rm=3" },
+        { name: "coldfied", image: "https://yt3.googleusercontent.com/_zNMNbFnPOdX9-x2oP158u5VVKfJFhMXjxYedxQyvV0POZGnq6w0FVeR4w9T2dLwS0jgcJGYow=s160-c-k-c0x00ffffff-no-rj" }
     ];
 
 
