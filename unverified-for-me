@@ -36,11 +36,11 @@ class UnverifiedIntro {
 		});
 
 		this.check = document.createElement("div");
-		this.check.textContent = "✓";
+		this.check.textContent = "⚔";
 		Object.assign(this.check.style, {
-			color: "red", fontSize: "5rem", opacity: 0.05,
+			color: "orange", fontSize: "5rem", opacity: 0.05,
 			transition: "opacity 1s ease, transform 1s ease",
-			textShadow: '0 0 5px red, 0 0 10px red, 0 0 20px red',
+			textShadow: '0 0 5px orange, 0 0 10px orange, 0 0 20px red',
 		});
 
 		this.circle = document.createElement("div");
@@ -48,7 +48,7 @@ class UnverifiedIntro {
 			width: "100px",
 			height: "100px",
 			backgroundColor: "black",
-			border: "2px solid red",
+			border: "2px solid orange",
 			borderRadius: "50%",
 			boxShadow: "0 0 10px red, 0 0 20px red, 0 0 30px red",
 			display: "flex",
@@ -63,20 +63,20 @@ class UnverifiedIntro {
 		this.unverifiedText = document.createElement("div");
 		this.unverifiedText.textContent = "UnverifiedV2";
 		Object.assign(this.unverifiedText.style, {
-			color: "red", fontSize: "60px", opacity: 0,
+			color: "orange", fontSize: "60px", opacity: 0,
 			marginTop: "50px",
 			transition: "opacity 0.8s ease",
-			textShadow: '0 0 5px red, 0 0 10px red, 0 0 20px red',
+			textShadow: '0 0 5px orange, 0 0 10px orange, 0 0 20px red',
 		});
 		this.container.appendChild(this.unverifiedText);
 
 		this.creditsText = document.createElement("div");
 		this.creditsText.textContent = "@ZataLove_JP_Kohaku";
 		Object.assign(this.creditsText.style, {
-			color: "red", fontSize: "30px", opacity: 0, transition: "opacity 0.8s ease",
+			color: "orange", fontSize: "30px", opacity: 0, transition: "opacity 0.8s ease",
 			whiteSpace: 'pre-line',
 			textAlign: "center",
-			textShadow: '0 0 5px red, 0 0 10px red, 0 0 20px red',
+			textShadow: '0 0 5px orange, 0 0 10px orange, 0 0 20px red',
 		});
 		this.container.appendChild(this.creditsText);
 	}
