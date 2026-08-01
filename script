@@ -9,7 +9,9 @@
 //         infernium防具一式を装備し、名前は \lime\\glow\Eazy\reset\\gray\\glow\ Bot。
 //         索敵範囲は広い(DETECT_RANGE)が、実際に攻撃する間合いはおよそ1ブロック。
 //         それより遠いプレイヤーは距離0まで詰めるように追いかけ、
-//         ATTACK_RANGE以内に入ったら攻撃する。毎サイクル setInvulnerable(true) を出し直す。
+//         ATTACK_RANGE以内に入ったら攻撃する。
+//         無敵化は setInvulnerable ではなく entityDamage を毎回キャンセルする方式
+//         (setInvulnerable は静止NPC化して戦闘AIを止めてしまうため使わない)。
 
 var CHECK_INTERVAL = 0.5;   // game.every の間隔(秒)
 var ATTACK_RANGE = 1.5;     // 攻撃botが「攻撃」に切り替える判定距離(余裕を持たせる)
@@ -46,7 +48,7 @@ game.commands.register("bot1", { permission: "admin" }, function(sender, args) {
         return;
     }
     bot.stop();
-    bot.setInvulnerable(true); // 静止NPCとして倒されないように(不要なら削除可)
+    bot.setInvulnerable(true); // こちらは静止NPCのままでよいので無敵化してOK
     equipArmor(bot);
     bot.give(SWORD_ITEM, 1);
     bot.hold(SWORD_ITEM);
@@ -64,12 +66,24 @@ game.commands.register("bot2", { permission: "admin" }, function(sender, args) {
         sender.sendMessage("\\red\\Bot limit reached (max " + game.bots.max() + ").");
         return;
     }
-    bot.setInvulnerable(true);
+    // setInvulnerable は使わない(戦闘AIが止まってしまうため)
     equipArmor(bot);
     bot.give(SWORD_ITEM, 1);
     bot.hold(SWORD_ITEM);
     attackBots.push(bot);
     sender.sendMessage("\\lime\\\\glow\\Eazy\\reset\\\\gray\\\\glow\\ Bot\\reset\\ spawned!");
+});
+
+// bot2への被ダメージを毎回キャンセルして実質無敵にする(戦闘AIは維持される)
+game.on("entityDamage", function(e) {
+    if (!e.entity) return;
+    for (var i = 0; i < attackBots.length; i++) {
+        var abot = attackBots[i];
+        if (abot && abot.isAlive() && game.util.posEquals(abot.pos, e.entity.pos)) {
+            e.cancel();
+            return;
+        }
+    }
 });
 
 game.every(CHECK_INTERVAL, function() {
@@ -85,7 +99,6 @@ game.every(CHECK_INTERVAL, function() {
         var abot = attackBots[i];
         if (!abot || !abot.isAlive()) continue;
 
-        abot.setInvulnerable(true); // 念のため毎サイクル再適用
         abot.hold(SWORD_ITEM);
 
         var nearPlayers = game.world.getPlayersNear(abot.pos.x, abot.pos.y, abot.pos.z, DETECT_RANGE);
@@ -94,7 +107,6 @@ game.every(CHECK_INTERVAL, function() {
             continue;
         }
 
-        // 一番近いプレイヤーを選ぶ
         var target = nearPlayers[0];
         var bestDist = game.util.distanceSq(abot.pos, target.pos);
         for (var k = 1; k < nearPlayers.length; k++) {
@@ -106,10 +118,8 @@ game.every(CHECK_INTERVAL, function() {
         }
 
         if (game.util.within(abot.pos, target.pos, ATTACK_RANGE)) {
-            // 攻撃範囲内 → 攻撃(毎サイクル呼び直して狙い続ける)
             abot.attack(target);
         } else {
-            // 攻撃範囲外 → できるだけ近づく
             abot.follow(target, FOLLOW_DISTANCE);
         }
     }
