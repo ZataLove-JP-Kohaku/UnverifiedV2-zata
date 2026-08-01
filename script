@@ -1,0 +1,116 @@
+// =====================================
+// BOT SCRIPT — passive stationary bot + invulnerable short-reach attacking bot
+// =====================================
+// /bot1 : コマンドを打った本人の場所に、動かず・攻撃もしない静止botを1体召喚。
+//         infernium防具一式を装備し、メインハンドに infernium_sword を持つ。
+//         毎サイクル stop() を出し直して、攻撃/移動系のゴールに戻らないようにする。
+//
+// /bot2 : コマンドを打った本人の場所に、無敵かつ攻撃してくるbotを1体召喚。
+//         infernium防具一式を装備し、名前は \lime\\glow\Eazy\reset\\gray\\glow\ Bot。
+//         索敵範囲は広い(DETECT_RANGE)が、実際に攻撃する間合いはおよそ1ブロック。
+//         それより遠いプレイヤーは距離0まで詰めるように追いかけ、
+//         ATTACK_RANGE以内に入ったら攻撃する。毎サイクル setInvulnerable(true) を出し直す。
+
+var CHECK_INTERVAL = 0.5;   // game.every の間隔(秒)
+var ATTACK_RANGE = 1.5;     // 攻撃botが「攻撃」に切り替える判定距離(余裕を持たせる)
+var FOLLOW_DISTANCE = 0;    // 追跡時にどこまで近づくか(0 = できるだけ密着)
+var DETECT_RANGE = 32;      // 攻撃botがプレイヤーを認識する索敵範囲(ブロック)
+
+var ARMOR = {
+    helmet: "infernium_helmet",
+    chestplate: "infernium_chestplate",
+    leggings: "infernium_leggings",
+    boots: "infernium_boots"
+};
+
+var SWORD_ITEM = "infernium_sword";
+
+var passiveBots = [];
+var attackBots = [];
+
+function equipArmor(bot) {
+    bot.equip("helmet", ARMOR.helmet);
+    bot.equip("chestplate", ARMOR.chestplate);
+    bot.equip("leggings", ARMOR.leggings);
+    bot.equip("boots", ARMOR.boots);
+}
+
+game.commands.register("bot1", { permission: "admin" }, function(sender, args) {
+    var pos = sender.pos;
+    var bot = game.bots.spawn(pos.x, pos.y, pos.z, {
+        name: "\\gray\\\\glow\\Dummy Bot",
+        difficulty: "medium"
+    });
+    if (!bot) {
+        sender.sendMessage("\\red\\Bot limit reached (max " + game.bots.max() + ").");
+        return;
+    }
+    bot.stop();
+    bot.setInvulnerable(true); // 静止NPCとして倒されないように(不要なら削除可)
+    equipArmor(bot);
+    bot.give(SWORD_ITEM, 1);
+    bot.hold(SWORD_ITEM);
+    passiveBots.push(bot);
+    sender.sendMessage("\\gray\\\\glow\\Holder Bot\\reset\\ spawned!");
+});
+
+game.commands.register("bot2", { permission: "admin" }, function(sender, args) {
+    var pos = sender.pos;
+    var bot = game.bots.spawn(pos.x, pos.y, pos.z, {
+        name: "\\lime\\\\glow\\Eazy\\reset\\\\gray\\\\glow\\ Bot",
+        difficulty: "hard"
+    });
+    if (!bot) {
+        sender.sendMessage("\\red\\Bot limit reached (max " + game.bots.max() + ").");
+        return;
+    }
+    bot.setInvulnerable(true);
+    equipArmor(bot);
+    bot.give(SWORD_ITEM, 1);
+    bot.hold(SWORD_ITEM);
+    attackBots.push(bot);
+    sender.sendMessage("\\lime\\\\glow\\Eazy\\reset\\\\gray\\\\glow\\ Bot\\reset\\ spawned!");
+});
+
+game.every(CHECK_INTERVAL, function() {
+    // 静止bot
+    for (var j = 0; j < passiveBots.length; j++) {
+        var pbot = passiveBots[j];
+        if (!pbot || !pbot.isAlive()) continue;
+        pbot.stop();
+    }
+
+    // 攻撃bot: 索敵範囲内で最も近いプレイヤーを狙う
+    for (var i = 0; i < attackBots.length; i++) {
+        var abot = attackBots[i];
+        if (!abot || !abot.isAlive()) continue;
+
+        abot.setInvulnerable(true); // 念のため毎サイクル再適用
+        abot.hold(SWORD_ITEM);
+
+        var nearPlayers = game.world.getPlayersNear(abot.pos.x, abot.pos.y, abot.pos.z, DETECT_RANGE);
+        if (nearPlayers.length === 0) {
+            abot.stop();
+            continue;
+        }
+
+        // 一番近いプレイヤーを選ぶ
+        var target = nearPlayers[0];
+        var bestDist = game.util.distanceSq(abot.pos, target.pos);
+        for (var k = 1; k < nearPlayers.length; k++) {
+            var d = game.util.distanceSq(abot.pos, nearPlayers[k].pos);
+            if (d < bestDist) {
+                bestDist = d;
+                target = nearPlayers[k];
+            }
+        }
+
+        if (game.util.within(abot.pos, target.pos, ATTACK_RANGE)) {
+            // 攻撃範囲内 → 攻撃(毎サイクル呼び直して狙い続ける)
+            abot.attack(target);
+        } else {
+            // 攻撃範囲外 → できるだけ近づく
+            abot.follow(target, FOLLOW_DISTANCE);
+        }
+    }
+});
