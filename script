@@ -2,10 +2,17 @@
 // Bridge Practice Server (Zeqa-style) — "time" mode + "clutch" mode
 // ============================================================
 // Assumptions (validate/adjust if your item/block catalog differs):
-//   blocks: "yellow_wool", "light_blue_wool", "stone", "sandstone"
-//   items:  "green_dye", "red_dye", "compass", "sandstone", "diamond_pickaxe"
+//   blocks: "stone", "sandstone"
+//   items:  "light_blue_wool" (Clutch selector), "yellow_wool" (Time selector),
+//           "green_dye", "red_dye", "compass", "sandstone", "diamond_pickaxe"
 //   enchant id: "efficiency"
 // scriptLoad logs a warning if any of these don't exist on this planet.
+//
+// NOTE: the text markup only documents color/bold/italic/underline/glow/reset —
+// there's no dedicated "bigger text" tag, so "少しでかく" is approximated with \bold\.
+// NOTE: game.scoreboard.set() is a single server-wide sidebar (no per-viewer API
+// documented), so "Personal Best" / "Time" reflect whichever time-mode player most
+// recently finished a run — it can't truly be a different view per player.
 
 // ---------------- CONFIG ----------------
 
@@ -17,25 +24,41 @@ const CLUTCH_COLS = 6;
 const CLUTCH_SLOTS = 24;
 
 const TIME_BASE_X = 0, TIME_BASE_Z = -2000, TIME_Y = 100;
-const TIME_SPACING = 50;
-const TIME_GAP = 30; // distance between island A and island B within one pair
+const TIME_SPACING = 50;       // spacing between pair columns
+const TIME_GAP = 30;           // distance from island A to island B (along -Z)
+const TIME_ROW_SPACING = TIME_GAP + 40; // spacing between pair rows, keeps bridges clear of each other
 const TIME_COLS = 4;
 const TIME_PAIRS = 16;
 
-const VOID_MARGIN = 15;   // blocks below island Y that trigger a safety teleport
+const VOID_MARGIN = 15;    // blocks below island Y that trigger a safety teleport
 const ISLAND_RADIUS = 3.5; // "on island" detection radius
 
-// Knockback is always along the Z axis (never based on player look direction).
-// -1 = knock toward -Z, 1 = knock toward +Z.
-const CLUTCH_KB_Z_DIRECTION = -1;
+// Knockback is always along the Z axis (never based on player look direction),
+// and always toward POSITIVE Z.
+const CLUTCH_KB_Z_DIRECTION = 1;
+
+// Approximate gravity (blocks/tick^2) used to convert a desired peak height in
+// BLOCKS into an initial vertical launch velocity, so the "up knockback" setting
+// is calibrated in something a player can reason about instead of a raw velocity
+// number that swings wildly with tiny changes.
+const CLUTCH_GRAVITY = 0.08;
+function heightToVelocity(blocks) {
+  return Math.sqrt(2 * CLUTCH_GRAVITY * blocks);
+}
 
 const DEFAULT_CLUTCH_SETTINGS = {
   backKnockback: 1.2,
-  upKnockback: 0.5,
+  upKnockback: 5, // blocks of peak height, not a raw velocity
   delayTicks: 20,
   comboCount: 3,
   cooldownTicks: 40,
 };
+
+// Timer must be crossed moving in the -Z direction; the finish line sits a fixed
+// offset before the spawn point (matches TIME_BASE_Z - 20 = -2020, TIME_Y - 5 = 95
+// for the first island pair) and generalizes the same way for every other pair.
+const TIME_FINISH_Z_OFFSET = 20;
+const TIME_FINISH_MIN_Y = TIME_Y - 5;
 
 // ---------------- RUNTIME STATE (in-memory, per script instance) ----------------
 
@@ -54,11 +77,11 @@ function clutchIslandPos(i) {
 function timeIslandPair(i) {
   const col = i % TIME_COLS;
   const row = Math.floor(i / TIME_COLS);
-  const baseX = TIME_BASE_X + col * TIME_SPACING * 2;
-  const baseZ = TIME_BASE_Z + row * TIME_SPACING;
+  const baseX = TIME_BASE_X + col * TIME_SPACING;
+  const baseZ = TIME_BASE_Z - row * TIME_ROW_SPACING;
   return {
     a: { x: baseX, y: TIME_Y, z: baseZ },
-    b: { x: baseX + TIME_GAP, y: TIME_Y, z: baseZ },
+    b: { x: baseX, y: TIME_Y, z: baseZ - TIME_GAP },
   };
 }
 
@@ -66,8 +89,6 @@ function timeIslandPair(i) {
 
 function buildLobby() {
   game.world.fill(LOBBY_POS.x - 5, LOBBY_POS.y - 1, LOBBY_POS.z - 5, LOBBY_POS.x + 5, LOBBY_POS.y - 1, LOBBY_POS.z + 5, "stone");
-  game.world.setBlock(LOBBY_POS.x + 3, LOBBY_POS.y, LOBBY_POS.z, "yellow_wool");
-  game.world.setBlock(LOBBY_POS.x - 3, LOBBY_POS.y, LOBBY_POS.z, "light_blue_wool");
 }
 
 function buildClutchIsland(i) {
@@ -128,12 +149,21 @@ function freeSlot(p, d) {
   }
 }
 
+// ---------------- LOBBY ITEMS ----------------
+
+function giveLobbyItems(p) {
+  p.give("light_blue_wool", 1, { name: "\\cyan\\clutch" });
+  p.give("yellow_wool", 1, { name: "\\yellow\\Time" });
+}
+
 // ---------------- MODE TRANSITIONS ----------------
 
 function returnToLobby(p) {
   freeSlot(p, p.getData());
   p.setData({ mode: "lobby" });
+  p.setGameMode("survival");
   game.runCommand("clear " + p.name);
+  giveLobbyItems(p);
   p.teleport(LOBBY_POS.x + 0.5, LOBBY_POS.y + 1, LOBBY_POS.z + 0.5);
   p.sendMessage("\\gray\\Returned to lobby.");
 }
@@ -147,6 +177,7 @@ function enterClutchMode(p) {
   }
   const pos = clutchIslandPos(slot);
   p.setData({ mode: "clutch", clutchSlot: slot, clutchRunning: false });
+  p.setGameMode("survival");
   game.runCommand("clear " + p.name);
   p.give("green_dye", 1, { name: "\\green\\Start Clutch" });
   p.give("compass", 1, { name: "\\aqua\\Clutch Settings" });
@@ -164,12 +195,15 @@ function enterTimeMode(p) {
   }
   const pair = timeIslandPair(pairIndex);
   p.setData({ mode: "time", timePair: pairIndex, timerRunning: false, timerStart: null });
+  p.setGameMode("survival");
   game.runCommand("clear " + p.name);
-  p.give("sandstone", 128);
+  // Slots 1 & 2: two 64-stacks of sandstone = 128 total.
+  p.give("sandstone", 64);
+  p.give("sandstone", 64);
   p.give("diamond_pickaxe", 1, { enchants: [{ id: "efficiency", level: 30 }] });
   p.give("red_dye", 1, { name: "\\red\\Return to Lobby" });
   p.teleport(pair.a.x + 0.5, pair.a.y + 1, pair.a.z + 0.5);
-  p.sendMessage("\\aqua\\Bridge to the other island! Leave spawn to start the timer.");
+  p.sendMessage("\\aqua\\Bridge in the -Z direction to the other island! Leave spawn to start the timer.");
 }
 
 // ---------------- CLUTCH PRACTICE ----------------
@@ -196,8 +230,8 @@ function scheduleClutchHit(playerName, settings) {
     const d = cur.getData() || {};
     if (!d.clutchRunning) return;
 
-    // Knockback is always along the Z axis, regardless of the direction the player is facing.
-    cur.launch(0, settings.upKnockback, CLUTCH_KB_Z_DIRECTION * settings.backKnockback);
+    // Always +Z, never based on where the player is looking.
+    cur.launch(0, heightToVelocity(settings.upKnockback), CLUTCH_KB_Z_DIRECTION * settings.backKnockback);
 
     d.clutchHitsLeft = (d.clutchHitsLeft || 1) - 1;
     cur.setData(d);
@@ -228,39 +262,40 @@ function openClutchSettingsGui(p) {
 
   function refresh() {
     menu.setItem(4, valueItem("feather", "Back Knockback", draft.backKnockback.toFixed(1)));
-    menu.setItem(13, valueItem("feather", "Up Knockback", draft.upKnockback.toFixed(1)));
+    menu.setItem(13, valueItem("feather", "Up Knockback", draft.upKnockback + " blocks"));
     menu.setItem(22, valueItem("clock", "Hit Delay", draft.delayTicks + " ticks"));
     menu.setItem(31, valueItem("gunpowder", "Hit Count", String(draft.comboCount)));
     menu.setItem(40, valueItem("clock", "Cooldown", draft.cooldownTicks + " ticks"));
   }
 
-  function adjust(field, delta, min, max) {
+  function adjust(field, delta, min, max, round) {
     return () => {
-      draft[field] = game.util.clamp(round1(draft[field] + delta), min, max);
+      const raw = draft[field] + delta;
+      draft[field] = game.util.clamp(round ? round1(raw) : Math.round(raw), min, max);
       refresh();
     };
   }
 
   const items = [
-    { slot: 1, item: "redstone", name: "\\red\\-0.1", onClick: adjust("backKnockback", -0.1, 0.1, 3.0) },
+    { slot: 1, item: "redstone", name: "\\red\\-0.1", onClick: adjust("backKnockback", -0.1, 0.1, 3.0, true) },
     { slot: 4, item: "feather", name: "\\gold\\Back Knockback", lore: [draft.backKnockback.toFixed(1)], enabled: false },
-    { slot: 7, item: "emerald", name: "\\green\\+0.1", onClick: adjust("backKnockback", 0.1, 0.1, 3.0) },
+    { slot: 7, item: "emerald", name: "\\green\\+0.1", onClick: adjust("backKnockback", 0.1, 0.1, 3.0, true) },
 
-    { slot: 10, item: "redstone", name: "\\red\\-0.1", onClick: adjust("upKnockback", -0.1, 0.1, 2.0) },
-    { slot: 13, item: "feather", name: "\\gold\\Up Knockback", lore: [draft.upKnockback.toFixed(1)], enabled: false },
-    { slot: 16, item: "emerald", name: "\\green\\+0.1", onClick: adjust("upKnockback", 0.1, 0.1, 2.0) },
+    { slot: 10, item: "redstone", name: "\\red\\-1 block", onClick: adjust("upKnockback", -1, 1, 15, false) },
+    { slot: 13, item: "feather", name: "\\gold\\Up Knockback", lore: [draft.upKnockback + " blocks"], enabled: false },
+    { slot: 16, item: "emerald", name: "\\green\\+1 block", onClick: adjust("upKnockback", 1, 1, 15, false) },
 
-    { slot: 19, item: "redstone", name: "\\red\\-5 ticks", onClick: adjust("delayTicks", -5, 0, 100) },
+    { slot: 19, item: "redstone", name: "\\red\\-5 ticks", onClick: adjust("delayTicks", -5, 0, 100, false) },
     { slot: 22, item: "clock", name: "\\gold\\Hit Delay", lore: [draft.delayTicks + " ticks"], enabled: false },
-    { slot: 25, item: "emerald", name: "\\green\\+5 ticks", onClick: adjust("delayTicks", 5, 0, 100) },
+    { slot: 25, item: "emerald", name: "\\green\\+5 ticks", onClick: adjust("delayTicks", 5, 0, 100, false) },
 
-    { slot: 28, item: "redstone", name: "\\red\\-1", onClick: adjust("comboCount", -1, 1, 10) },
+    { slot: 28, item: "redstone", name: "\\red\\-1", onClick: adjust("comboCount", -1, 1, 10, false) },
     { slot: 31, item: "gunpowder", name: "\\gold\\Hit Count", lore: [String(draft.comboCount)], enabled: false },
-    { slot: 34, item: "emerald", name: "\\green\\+1", onClick: adjust("comboCount", 1, 1, 10) },
+    { slot: 34, item: "emerald", name: "\\green\\+1", onClick: adjust("comboCount", 1, 1, 10, false) },
 
-    { slot: 37, item: "redstone", name: "\\red\\-5 ticks", onClick: adjust("cooldownTicks", -5, 5, 200) },
+    { slot: 37, item: "redstone", name: "\\red\\-5 ticks", onClick: adjust("cooldownTicks", -5, 5, 200, false) },
     { slot: 40, item: "clock", name: "\\gold\\Cooldown", lore: [draft.cooldownTicks + " ticks"], enabled: false },
-    { slot: 43, item: "emerald", name: "\\green\\+5 ticks", onClick: adjust("cooldownTicks", 5, 5, 200) },
+    { slot: 43, item: "emerald", name: "\\green\\+5 ticks", onClick: adjust("cooldownTicks", 5, 5, 200, false) },
 
     { slot: 47, item: "barrier", name: "\\red\\Cancel", onClick: (ctx) => {
         ctx.player.sendMessage("\\gray\\Cancelled.");
@@ -276,16 +311,61 @@ function openClutchSettingsGui(p) {
   menu = game.gui.open(p, { title: "\\aqua\\Clutch Settings", rows: 6, items: items });
 }
 
+// ---------------- TIME MODE FORMATTING + SCOREBOARD ----------------
+
+function formatTimeComma(ms) {
+  // Seconds to 3 decimal places, comma as the fractional separator per spec.
+  return (ms / 1000).toFixed(3).replace(".", ",");
+}
+
+function blankLine(n) {
+  // Distinct near-invisible spacer lines (avoids duplicate-string collisions).
+  return "\\reset\\" + " ".repeat(n);
+}
+
+function buildTop3Lines() {
+  const top3 = game.stats.top("besttime", 3, { order: "asc" }); // lower ms = faster = better
+  const lines = [];
+  for (let i = 0; i < 3; i++) {
+    const entry = top3[i];
+    if (entry) {
+      lines.push("\\lime\\" + entry.name + "\\gray\\: \\yellow\\" + formatTimeComma(entry.value));
+    } else {
+      lines.push("\\lime\\---\\gray\\: \\yellow\\--,---");
+    }
+  }
+  return lines;
+}
+
+function updateScoreboard(p) {
+  const bestMs = game.playerData.get(p.uuid, "bestTimeMs", null);
+  const lastMs = game.playerData.get(p.uuid, "lastTimeMs", null);
+
+  const lines = [];
+  lines.push("\\orange\\\\bold\\TOP3\\reset\\");
+  lines.push(...buildTop3Lines());
+  lines.push(blankLine(1));
+  lines.push("\\cyan\\\\bold\\Personal Best\\reset\\");
+  lines.push("\\yellow\\" + (bestMs !== null ? formatTimeComma(bestMs) : "--,---"));
+  lines.push(blankLine(2));
+  lines.push("\\lime\\\\bold\\Time\\reset\\");
+  lines.push("\\yellow\\" + (lastMs !== null ? formatTimeComma(lastMs) : "--,---"));
+
+  game.scoreboard.set("\\lime\\\\bold\\Fast Builder\\reset\\", lines);
+}
+
 // ---------------- INTERACTIONS ----------------
 
-game.interactions.on("rightClickBlock", { block: "yellow_wool" }, (ctx) => {
+game.interactions.on("useItem", { item: "light_blue_wool" }, (ctx) => {
   ctx.cancel();
-  enterTimeMode(ctx.player);
+  if (ctx.initialPress === false) return;
+  enterClutchMode(ctx.player);
 });
 
-game.interactions.on("rightClickBlock", { block: "light_blue_wool" }, (ctx) => {
+game.interactions.on("useItem", { item: "yellow_wool" }, (ctx) => {
   ctx.cancel();
-  enterClutchMode(ctx.player);
+  if (ctx.initialPress === false) return;
+  enterTimeMode(ctx.player);
 });
 
 game.interactions.on("useItem", { item: "green_dye" }, (ctx) => {
@@ -307,6 +387,25 @@ game.interactions.on("useItem", { item: "red_dye" }, (ctx) => {
   returnToLobby(ctx.player);
 });
 
+// ---------------- BLOCK BREAK RESTRICTION (all modes) ----------------
+
+function resolveBreakPos(e) {
+  if (e.pos) return e.pos;
+  if (typeof e.x === "number") return { x: e.x, y: e.y, z: e.z };
+  return null;
+}
+
+game.on("blockBreak", (e) => {
+  let blockName = typeof e.block === "string" ? e.block : null;
+  if (!blockName) {
+    const pos = resolveBreakPos(e);
+    if (pos) blockName = game.world.getBlock(pos.x, pos.y, pos.z);
+  }
+  if (blockName !== "sandstone") {
+    e.cancel();
+  }
+});
+
 // ---------------- VOID SAFETY + TIME-MODE TIMER ----------------
 
 game.on("playerMove", (e) => {
@@ -320,9 +419,13 @@ game.on("playerMove", (e) => {
       p.teleport(pos.x + 0.5, pos.y + 1, pos.z + 0.5);
       p.launch(0, 0.1, 0);
     }
-  } else if (d.mode === "time") {
+    return;
+  }
+
+  if (d.mode === "time") {
     const pair = timeIslandPair(d.timePair);
 
+    // Void safety: fell off the bridge.
     if (p.pos.y < pair.a.y - VOID_MARGIN) {
       p.teleport(pair.a.x + 0.5, pair.a.y + 1, pair.a.z + 0.5);
       p.launch(0, 0.1, 0);
@@ -336,32 +439,41 @@ game.on("playerMove", (e) => {
     }
 
     if (!d.timerRunning) {
-      if (!game.util.within(p.pos, pair.a, ISLAND_RADIUS)) {
+      // Only counts as "starting" when moving in the -Z direction.
+      if (p.pos.z < pair.a.z - ISLAND_RADIUS) {
         d.timerRunning = true;
         d.timerStart = Date.now();
         p.setData(d);
         p.sendMessage("\\yellow\\Timer started!");
       }
-    } else if (game.util.within(p.pos, pair.b, ISLAND_RADIUS)) {
+      return;
+    }
+
+    const finishZ = pair.a.z - TIME_FINISH_Z_OFFSET;
+    if (p.pos.z < finishZ && p.pos.y > TIME_FINISH_MIN_Y) {
       const elapsedMs = Date.now() - d.timerStart;
-      const ticks = Math.round(elapsedMs / 50);
-      const timeStr = game.util.formatTime(ticks);
 
       d.timerRunning = false;
       d.timerStart = null;
       p.setData(d);
 
-      p.sendMessage("\\green\\You made it! Time: \\gold\\" + timeStr);
+      const timeStr = formatTimeComma(elapsedMs);
+      const titleMsg = "\\lime\\Time\\gray\\: \\yellow\\" + timeStr;
+      game.runCommand('title ' + p.name + ' title "' + titleMsg + '"');
 
-      const prevBest = game.playerData.get(p.uuid, "bestTimeTicks", null);
-      if (prevBest === null || ticks < prevBest) {
-        game.playerData.set(p.uuid, "bestTimeTicks", ticks);
-        game.stats.set("besttime", p.uuid, ticks, p.name);
-        p.sendMessage("\\gold\\New personal best!");
+      game.playerData.set(p.uuid, "lastTimeMs", elapsedMs);
+      const prevBest = game.playerData.get(p.uuid, "bestTimeMs", null);
+      if (prevBest === null || elapsedMs < prevBest) {
+        game.playerData.set(p.uuid, "bestTimeMs", elapsedMs);
+        game.stats.set("besttime", p.uuid, elapsedMs, p.name);
       }
 
+      updateScoreboard(p);
+
+      // Reset the player back onto island A with fresh supplies.
       game.runCommand("clear " + p.name);
-      p.give("sandstone", 128);
+      p.give("sandstone", 64);
+      p.give("sandstone", 64);
       p.give("diamond_pickaxe", 1, { enchants: [{ id: "efficiency", level: 30 }] });
       p.give("red_dye", 1, { name: "\\red\\Return to Lobby" });
       p.teleport(pair.a.x + 0.5, pair.a.y + 1, pair.a.z + 0.5);
@@ -384,9 +496,11 @@ game.on("entityDamage", (e) => {
 game.on("playerJoin", (e) => {
   const p = e.player;
   p.setData({ mode: "lobby" });
+  p.setGameMode("survival");
+  giveLobbyItems(p);
   p.teleport(LOBBY_POS.x + 0.5, LOBBY_POS.y + 1, LOBBY_POS.z + 0.5);
   p.sendMessage("\\gold\\Welcome to the Bridge Practice server!");
-  p.sendMessage("\\yellow\\Right-click YELLOW wool for Time mode, \\aqua\\right-click LIGHT BLUE wool for Clutch mode.");
+  p.sendMessage("\\cyan\\Right-click clutch\\gray\\ / \\yellow\\Time\\gray\\ in your hotbar to pick a mode.");
 });
 
 game.on("playerQuit", (e) => {
@@ -396,13 +510,13 @@ game.on("playerQuit", (e) => {
 // ---------------- SETUP ----------------
 
 game.on("scriptLoad", () => {
-  const namesToCheck = ["yellow_wool", "light_blue_wool", "stone", "sandstone"];
-  for (let i = 0; i < namesToCheck.length; i++) {
-    if (!game.blocks.exists(namesToCheck[i])) {
-      console.log("WARNING: block '" + namesToCheck[i] + "' not found on this planet — adjust the script.");
+  const blockNamesToCheck = ["stone", "sandstone"];
+  for (let i = 0; i < blockNamesToCheck.length; i++) {
+    if (!game.blocks.exists(blockNamesToCheck[i])) {
+      console.log("WARNING: block '" + blockNamesToCheck[i] + "' not found on this planet — adjust the script.");
     }
   }
-  const itemsToCheck = ["green_dye", "red_dye", "compass", "sandstone", "diamond_pickaxe"];
+  const itemsToCheck = ["light_blue_wool", "yellow_wool", "green_dye", "red_dye", "compass", "sandstone", "diamond_pickaxe"];
   for (let i = 0; i < itemsToCheck.length; i++) {
     if (!game.items.exists(itemsToCheck[i])) {
       console.log("WARNING: item '" + itemsToCheck[i] + "' not found on this planet — adjust the script.");
