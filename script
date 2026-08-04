@@ -1,126 +1,418 @@
-// =====================================
-// BOT SCRIPT — passive stationary bot + invulnerable short-reach attacking bot
-// =====================================
-// /bot1 : コマンドを打った本人の場所に、動かず・攻撃もしない静止botを1体召喚。
-//         infernium防具一式を装備し、メインハンドに infernium_sword を持つ。
-//         毎サイクル stop() を出し直して、攻撃/移動系のゴールに戻らないようにする。
-//
-// /bot2 : コマンドを打った本人の場所に、無敵かつ攻撃してくるbotを1体召喚。
-//         infernium防具一式を装備し、名前は \lime\\glow\Eazy\reset\\gray\\glow\ Bot。
-//         索敵範囲は広い(DETECT_RANGE)が、実際に攻撃する間合いはおよそ1ブロック。
-//         それより遠いプレイヤーは距離0まで詰めるように追いかけ、
-//         ATTACK_RANGE以内に入ったら攻撃する。
-//         無敵化は setInvulnerable ではなく entityDamage を毎回キャンセルする方式
-//         (setInvulnerable は静止NPC化して戦闘AIを止めてしまうため使わない)。
+// ============================================================
+// Bridge Practice Server (Zeqa-style) — "time" mode + "clutch" mode
+// ============================================================
+// Assumptions (validate/adjust if your item/block catalog differs):
+//   blocks: "yellow_wool", "light_blue_wool", "stone", "sandstone"
+//   items:  "green_dye", "red_dye", "compass", "sandstone", "diamond_pickaxe"
+//   enchant id: "efficiency"
+// scriptLoad logs a warning if any of these don't exist on this planet.
 
-var CHECK_INTERVAL = 0.5;   // game.every の間隔(秒)
-var ATTACK_RANGE = 1.5;     // 攻撃botが「攻撃」に切り替える判定距離(余裕を持たせる)
-var FOLLOW_DISTANCE = 0;    // 追跡時にどこまで近づくか(0 = できるだけ密着)
-var DETECT_RANGE = 32;      // 攻撃botがプレイヤーを認識する索敵範囲(ブロック)
+// ---------------- CONFIG ----------------
 
-var ARMOR = {
-    helmet: "infernium_helmet",
-    chestplate: "infernium_chestplate",
-    leggings: "infernium_leggings",
-    boots: "infernium_boots"
+const LOBBY_POS = { x: 0, y: 65, z: 0 };
+
+const CLUTCH_BASE_X = 0, CLUTCH_BASE_Z = 2000, CLUTCH_Y = 100;
+const CLUTCH_SPACING = 40;
+const CLUTCH_COLS = 6;
+const CLUTCH_SLOTS = 24;
+
+const TIME_BASE_X = 0, TIME_BASE_Z = -2000, TIME_Y = 100;
+const TIME_SPACING = 50;
+const TIME_GAP = 30; // distance between island A and island B within one pair
+const TIME_COLS = 4;
+const TIME_PAIRS = 16;
+
+const VOID_MARGIN = 15;   // blocks below island Y that trigger a safety teleport
+const ISLAND_RADIUS = 3.5; // "on island" detection radius
+
+// Knockback is always along the Z axis (never based on player look direction).
+// -1 = knock toward -Z, 1 = knock toward +Z.
+const CLUTCH_KB_Z_DIRECTION = -1;
+
+const DEFAULT_CLUTCH_SETTINGS = {
+  backKnockback: 1.2,
+  upKnockback: 0.5,
+  delayTicks: 20,
+  comboCount: 3,
+  cooldownTicks: 40,
 };
 
-var SWORD_ITEM = "infernium_sword";
+// ---------------- RUNTIME STATE (in-memory, per script instance) ----------------
 
-var passiveBots = [];
-var attackBots = [];
+let clutchOccupancy = {}; // slotIndex -> uuid
+let timeOccupancy = {};   // pairIndex -> uuid
+let buildQueue = [];
 
-function equipArmor(bot) {
-    bot.equip("helmet", ARMOR.helmet);
-    bot.equip("chestplate", ARMOR.chestplate);
-    bot.equip("leggings", ARMOR.leggings);
-    bot.equip("boots", ARMOR.boots);
+// ---------------- LAYOUT HELPERS ----------------
+
+function clutchIslandPos(i) {
+  const col = i % CLUTCH_COLS;
+  const row = Math.floor(i / CLUTCH_COLS);
+  return { x: CLUTCH_BASE_X + col * CLUTCH_SPACING, y: CLUTCH_Y, z: CLUTCH_BASE_Z + row * CLUTCH_SPACING };
 }
 
-game.commands.register("bot1", { permission: "admin" }, function(sender, args) {
-    var pos = sender.pos;
-    var bot = game.bots.spawn(pos.x, pos.y, pos.z, {
-        name: "\\gray\\\\glow\\Dummy Bot",
-        difficulty: "medium"
-    });
-    if (!bot) {
-        sender.sendMessage("\\red\\Bot limit reached (max " + game.bots.max() + ").");
-        return;
+function timeIslandPair(i) {
+  const col = i % TIME_COLS;
+  const row = Math.floor(i / TIME_COLS);
+  const baseX = TIME_BASE_X + col * TIME_SPACING * 2;
+  const baseZ = TIME_BASE_Z + row * TIME_SPACING;
+  return {
+    a: { x: baseX, y: TIME_Y, z: baseZ },
+    b: { x: baseX + TIME_GAP, y: TIME_Y, z: baseZ },
+  };
+}
+
+// ---------------- BUILDING ----------------
+
+function buildLobby() {
+  game.world.fill(LOBBY_POS.x - 5, LOBBY_POS.y - 1, LOBBY_POS.z - 5, LOBBY_POS.x + 5, LOBBY_POS.y - 1, LOBBY_POS.z + 5, "stone");
+  game.world.setBlock(LOBBY_POS.x + 3, LOBBY_POS.y, LOBBY_POS.z, "yellow_wool");
+  game.world.setBlock(LOBBY_POS.x - 3, LOBBY_POS.y, LOBBY_POS.z, "light_blue_wool");
+}
+
+function buildClutchIsland(i) {
+  const pos = clutchIslandPos(i);
+  game.world.fill(pos.x - 2, pos.y, pos.z - 2, pos.x + 2, pos.y, pos.z + 2, "stone");
+}
+
+function buildTimeIslandPair(i) {
+  const pair = timeIslandPair(i);
+  game.world.fill(pair.a.x - 2, pair.a.y, pair.a.z - 2, pair.a.x + 2, pair.a.y, pair.a.z + 2, "sandstone");
+  game.world.fill(pair.b.x - 2, pair.b.y, pair.b.z - 2, pair.b.x + 2, pair.b.y, pair.b.z + 2, "sandstone");
+}
+
+function queueAllBuilds() {
+  for (let i = 0; i < CLUTCH_SLOTS; i++) buildQueue.push({ type: "clutch", index: i });
+  for (let i = 0; i < TIME_PAIRS; i++) buildQueue.push({ type: "time", index: i });
+}
+
+function processBuildQueue() {
+  for (let n = 0; n < 2 && buildQueue.length > 0; n++) {
+    const job = buildQueue.shift();
+    if (job.type === "clutch") buildClutchIsland(job.index);
+    else buildTimeIslandPair(job.index);
+  }
+  if (buildQueue.length === 0) {
+    game.storage.set("arenasBuilt", true);
+  }
+}
+
+// ---------------- SLOT ASSIGNMENT ----------------
+
+function assignClutchSlot(p) {
+  for (let i = 0; i < CLUTCH_SLOTS; i++) {
+    if (!clutchOccupancy[i]) {
+      clutchOccupancy[i] = p.uuid;
+      return i;
     }
-    bot.stop();
-    bot.setInvulnerable(true); // こちらは静止NPCのままでよいので無敵化してOK
-    equipArmor(bot);
-    bot.give(SWORD_ITEM, 1);
-    bot.hold(SWORD_ITEM);
-    passiveBots.push(bot);
-    sender.sendMessage("\\gray\\\\glow\\Holder Bot\\reset\\ spawned!");
+  }
+  return null;
+}
+
+function assignTimeSlot(p) {
+  for (let i = 0; i < TIME_PAIRS; i++) {
+    if (!timeOccupancy[i]) {
+      timeOccupancy[i] = p.uuid;
+      return i;
+    }
+  }
+  return null;
+}
+
+function freeSlot(p, d) {
+  d = d || {};
+  if (d.mode === "clutch" && d.clutchSlot !== undefined) {
+    if (clutchOccupancy[d.clutchSlot] === p.uuid) delete clutchOccupancy[d.clutchSlot];
+  } else if (d.mode === "time" && d.timePair !== undefined) {
+    if (timeOccupancy[d.timePair] === p.uuid) delete timeOccupancy[d.timePair];
+  }
+}
+
+// ---------------- MODE TRANSITIONS ----------------
+
+function returnToLobby(p) {
+  freeSlot(p, p.getData());
+  p.setData({ mode: "lobby" });
+  game.runCommand("clear " + p.name);
+  p.teleport(LOBBY_POS.x + 0.5, LOBBY_POS.y + 1, LOBBY_POS.z + 0.5);
+  p.sendMessage("\\gray\\Returned to lobby.");
+}
+
+function enterClutchMode(p) {
+  freeSlot(p, p.getData());
+  const slot = assignClutchSlot(p);
+  if (slot === null) {
+    p.sendMessage("\\red\\All clutch islands are full right now, try again soon.");
+    return;
+  }
+  const pos = clutchIslandPos(slot);
+  p.setData({ mode: "clutch", clutchSlot: slot, clutchRunning: false });
+  game.runCommand("clear " + p.name);
+  p.give("green_dye", 1, { name: "\\green\\Start Clutch" });
+  p.give("compass", 1, { name: "\\aqua\\Clutch Settings" });
+  p.give("red_dye", 1, { name: "\\red\\Return to Lobby" });
+  p.teleport(pos.x + 0.5, pos.y + 1, pos.z + 0.5);
+  p.sendMessage("\\aqua\\Welcome to Clutch mode! Right-click the green dye to start a run.");
+}
+
+function enterTimeMode(p) {
+  freeSlot(p, p.getData());
+  const pairIndex = assignTimeSlot(p);
+  if (pairIndex === null) {
+    p.sendMessage("\\red\\All time islands are full right now, try again soon.");
+    return;
+  }
+  const pair = timeIslandPair(pairIndex);
+  p.setData({ mode: "time", timePair: pairIndex, timerRunning: false, timerStart: null });
+  game.runCommand("clear " + p.name);
+  p.give("sandstone", 128);
+  p.give("diamond_pickaxe", 1, { enchants: [{ id: "efficiency", level: 30 }] });
+  p.give("red_dye", 1, { name: "\\red\\Return to Lobby" });
+  p.teleport(pair.a.x + 0.5, pair.a.y + 1, pair.a.z + 0.5);
+  p.sendMessage("\\aqua\\Bridge to the other island! Leave spawn to start the timer.");
+}
+
+// ---------------- CLUTCH PRACTICE ----------------
+
+function startClutchPractice(p) {
+  const d = p.getData() || {};
+  if (d.mode !== "clutch") return;
+  if (d.clutchRunning) {
+    p.sendMessage("\\red\\A clutch run is already in progress!");
+    return;
+  }
+  const settings = game.playerData.get(p.uuid, "clutchSettings", DEFAULT_CLUTCH_SETTINGS);
+  d.clutchRunning = true;
+  d.clutchHitsLeft = settings.comboCount;
+  p.setData(d);
+  p.sendMessage("\\yellow\\Clutch practice starting...");
+  scheduleClutchHit(p.name, settings);
+}
+
+function scheduleClutchHit(playerName, settings) {
+  game.after(game.util.ticksToSeconds(settings.delayTicks), () => {
+    const cur = game.getPlayer(playerName);
+    if (!cur) return;
+    const d = cur.getData() || {};
+    if (!d.clutchRunning) return;
+
+    // Knockback is always along the Z axis, regardless of the direction the player is facing.
+    cur.launch(0, settings.upKnockback, CLUTCH_KB_Z_DIRECTION * settings.backKnockback);
+
+    d.clutchHitsLeft = (d.clutchHitsLeft || 1) - 1;
+    cur.setData(d);
+
+    if (d.clutchHitsLeft > 0) {
+      game.after(game.util.ticksToSeconds(settings.cooldownTicks), () => scheduleClutchHit(playerName, settings));
+    } else {
+      const finalD = cur.getData() || {};
+      finalD.clutchRunning = false;
+      cur.setData(finalD);
+      cur.sendMessage("\\green\\Clutch practice complete! Right-click the green dye to go again.");
+    }
+  });
+}
+
+// ---------------- CLUTCH SETTINGS GUI ----------------
+
+function round1(n) { return Math.round(n * 10) / 10; }
+
+function valueItem(icon, label, value) {
+  return { item: icon, name: "\\gold\\" + label, lore: [String(value)], enabled: false };
+}
+
+function openClutchSettingsGui(p) {
+  const stored = game.playerData.get(p.uuid, "clutchSettings", null) || DEFAULT_CLUTCH_SETTINGS;
+  const draft = Object.assign({}, DEFAULT_CLUTCH_SETTINGS, stored);
+  let menu;
+
+  function refresh() {
+    menu.setItem(4, valueItem("feather", "Back Knockback", draft.backKnockback.toFixed(1)));
+    menu.setItem(13, valueItem("feather", "Up Knockback", draft.upKnockback.toFixed(1)));
+    menu.setItem(22, valueItem("clock", "Hit Delay", draft.delayTicks + " ticks"));
+    menu.setItem(31, valueItem("gunpowder", "Hit Count", String(draft.comboCount)));
+    menu.setItem(40, valueItem("clock", "Cooldown", draft.cooldownTicks + " ticks"));
+  }
+
+  function adjust(field, delta, min, max) {
+    return () => {
+      draft[field] = game.util.clamp(round1(draft[field] + delta), min, max);
+      refresh();
+    };
+  }
+
+  const items = [
+    { slot: 1, item: "redstone", name: "\\red\\-0.1", onClick: adjust("backKnockback", -0.1, 0.1, 3.0) },
+    { slot: 4, item: "feather", name: "\\gold\\Back Knockback", lore: [draft.backKnockback.toFixed(1)], enabled: false },
+    { slot: 7, item: "emerald", name: "\\green\\+0.1", onClick: adjust("backKnockback", 0.1, 0.1, 3.0) },
+
+    { slot: 10, item: "redstone", name: "\\red\\-0.1", onClick: adjust("upKnockback", -0.1, 0.1, 2.0) },
+    { slot: 13, item: "feather", name: "\\gold\\Up Knockback", lore: [draft.upKnockback.toFixed(1)], enabled: false },
+    { slot: 16, item: "emerald", name: "\\green\\+0.1", onClick: adjust("upKnockback", 0.1, 0.1, 2.0) },
+
+    { slot: 19, item: "redstone", name: "\\red\\-5 ticks", onClick: adjust("delayTicks", -5, 0, 100) },
+    { slot: 22, item: "clock", name: "\\gold\\Hit Delay", lore: [draft.delayTicks + " ticks"], enabled: false },
+    { slot: 25, item: "emerald", name: "\\green\\+5 ticks", onClick: adjust("delayTicks", 5, 0, 100) },
+
+    { slot: 28, item: "redstone", name: "\\red\\-1", onClick: adjust("comboCount", -1, 1, 10) },
+    { slot: 31, item: "gunpowder", name: "\\gold\\Hit Count", lore: [String(draft.comboCount)], enabled: false },
+    { slot: 34, item: "emerald", name: "\\green\\+1", onClick: adjust("comboCount", 1, 1, 10) },
+
+    { slot: 37, item: "redstone", name: "\\red\\-5 ticks", onClick: adjust("cooldownTicks", -5, 5, 200) },
+    { slot: 40, item: "clock", name: "\\gold\\Cooldown", lore: [draft.cooldownTicks + " ticks"], enabled: false },
+    { slot: 43, item: "emerald", name: "\\green\\+5 ticks", onClick: adjust("cooldownTicks", 5, 5, 200) },
+
+    { slot: 47, item: "barrier", name: "\\red\\Cancel", onClick: (ctx) => {
+        ctx.player.sendMessage("\\gray\\Cancelled.");
+        menu.close();
+      } },
+    { slot: 51, item: "emerald_block", name: "\\green\\Confirm", onClick: (ctx) => {
+        game.playerData.set(ctx.player.uuid, "clutchSettings", draft);
+        ctx.player.sendMessage("\\green\\Clutch settings saved!");
+        menu.close();
+      } },
+  ];
+
+  menu = game.gui.open(p, { title: "\\aqua\\Clutch Settings", rows: 6, items: items });
+}
+
+// ---------------- INTERACTIONS ----------------
+
+game.interactions.on("rightClickBlock", { block: "yellow_wool" }, (ctx) => {
+  ctx.cancel();
+  enterTimeMode(ctx.player);
 });
 
-game.commands.register("bot2", { permission: "admin" }, function(sender, args) {
-    var pos = sender.pos;
-    var bot = game.bots.spawn(pos.x, pos.y, pos.z, {
-        name: "\\lime\\\\glow\\Eazy\\reset\\\\gray\\\\glow\\ Bot",
-        difficulty: "hard"
-    });
-    if (!bot) {
-        sender.sendMessage("\\red\\Bot limit reached (max " + game.bots.max() + ").");
-        return;
-    }
-    // setInvulnerable は使わない(戦闘AIが止まってしまうため)
-    equipArmor(bot);
-    bot.give(SWORD_ITEM, 1);
-    bot.hold(SWORD_ITEM);
-    attackBots.push(bot);
-    sender.sendMessage("\\lime\\\\glow\\Eazy\\reset\\\\gray\\\\glow\\ Bot\\reset\\ spawned!");
+game.interactions.on("rightClickBlock", { block: "light_blue_wool" }, (ctx) => {
+  ctx.cancel();
+  enterClutchMode(ctx.player);
 });
 
-// bot2への被ダメージを毎回キャンセルして実質無敵にする(戦闘AIは維持される)
-game.on("entityDamage", function(e) {
-    if (!e.entity) return;
-    for (var i = 0; i < attackBots.length; i++) {
-        var abot = attackBots[i];
-        if (abot && abot.isAlive() && game.util.posEquals(abot.pos, e.entity.pos)) {
-            e.cancel();
-            return;
-        }
-    }
+game.interactions.on("useItem", { item: "green_dye" }, (ctx) => {
+  ctx.cancel();
+  if (ctx.initialPress === false) return;
+  startClutchPractice(ctx.player);
 });
 
-game.every(CHECK_INTERVAL, function() {
-    // 静止bot
-    for (var j = 0; j < passiveBots.length; j++) {
-        var pbot = passiveBots[j];
-        if (!pbot || !pbot.isAlive()) continue;
-        pbot.stop();
+game.interactions.on("useItem", { item: "compass" }, (ctx) => {
+  ctx.cancel();
+  if (ctx.initialPress === false) return;
+  const d = ctx.player.getData() || {};
+  if (d.mode === "clutch") openClutchSettingsGui(ctx.player);
+});
+
+game.interactions.on("useItem", { item: "red_dye" }, (ctx) => {
+  ctx.cancel();
+  if (ctx.initialPress === false) return;
+  returnToLobby(ctx.player);
+});
+
+// ---------------- VOID SAFETY + TIME-MODE TIMER ----------------
+
+game.on("playerMove", (e) => {
+  const p = e.player;
+  const d = p.getData();
+  if (!d || !d.mode) return;
+
+  if (d.mode === "clutch") {
+    const pos = clutchIslandPos(d.clutchSlot);
+    if (p.pos.y < pos.y - VOID_MARGIN) {
+      p.teleport(pos.x + 0.5, pos.y + 1, pos.z + 0.5);
+      p.launch(0, 0.1, 0);
+    }
+  } else if (d.mode === "time") {
+    const pair = timeIslandPair(d.timePair);
+
+    if (p.pos.y < pair.a.y - VOID_MARGIN) {
+      p.teleport(pair.a.x + 0.5, pair.a.y + 1, pair.a.z + 0.5);
+      p.launch(0, 0.1, 0);
+      if (d.timerRunning) {
+        d.timerRunning = false;
+        d.timerStart = null;
+        p.setData(d);
+        p.sendMessage("\\red\\You fell! Timer reset.");
+      }
+      return;
     }
 
-    // 攻撃bot: 索敵範囲内で最も近いプレイヤーを狙う
-    for (var i = 0; i < attackBots.length; i++) {
-        var abot = attackBots[i];
-        if (!abot || !abot.isAlive()) continue;
+    if (!d.timerRunning) {
+      if (!game.util.within(p.pos, pair.a, ISLAND_RADIUS)) {
+        d.timerRunning = true;
+        d.timerStart = Date.now();
+        p.setData(d);
+        p.sendMessage("\\yellow\\Timer started!");
+      }
+    } else if (game.util.within(p.pos, pair.b, ISLAND_RADIUS)) {
+      const elapsedMs = Date.now() - d.timerStart;
+      const ticks = Math.round(elapsedMs / 50);
+      const timeStr = game.util.formatTime(ticks);
 
-        abot.hold(SWORD_ITEM);
+      d.timerRunning = false;
+      d.timerStart = null;
+      p.setData(d);
 
-        var nearPlayers = game.world.getPlayersNear(abot.pos.x, abot.pos.y, abot.pos.z, DETECT_RANGE);
-        if (nearPlayers.length === 0) {
-            abot.stop();
-            continue;
-        }
+      p.sendMessage("\\green\\You made it! Time: \\gold\\" + timeStr);
 
-        var target = nearPlayers[0];
-        var bestDist = game.util.distanceSq(abot.pos, target.pos);
-        for (var k = 1; k < nearPlayers.length; k++) {
-            var d = game.util.distanceSq(abot.pos, nearPlayers[k].pos);
-            if (d < bestDist) {
-                bestDist = d;
-                target = nearPlayers[k];
-            }
-        }
+      const prevBest = game.playerData.get(p.uuid, "bestTimeTicks", null);
+      if (prevBest === null || ticks < prevBest) {
+        game.playerData.set(p.uuid, "bestTimeTicks", ticks);
+        game.stats.set("besttime", p.uuid, ticks, p.name);
+        p.sendMessage("\\gold\\New personal best!");
+      }
 
-        if (game.util.within(abot.pos, target.pos, ATTACK_RANGE)) {
-            abot.attack(target);
-        } else {
-            abot.follow(target, FOLLOW_DISTANCE);
-        }
+      game.runCommand("clear " + p.name);
+      p.give("sandstone", 128);
+      p.give("diamond_pickaxe", 1, { enchants: [{ id: "efficiency", level: 30 }] });
+      p.give("red_dye", 1, { name: "\\red\\Return to Lobby" });
+      p.teleport(pair.a.x + 0.5, pair.a.y + 1, pair.a.z + 0.5);
     }
+  }
+});
+
+// fallback: never let void/fall damage actually land while in an arena
+game.on("entityDamage", (e) => {
+  const target = e.player || (e.entity && e.entity.isPlayer ? e.entity : null);
+  if (!target) return;
+  const d = target.getData();
+  if (d && (d.mode === "clutch" || d.mode === "time")) {
+    e.cancel();
+  }
+});
+
+// ---------------- JOIN / QUIT ----------------
+
+game.on("playerJoin", (e) => {
+  const p = e.player;
+  p.setData({ mode: "lobby" });
+  p.teleport(LOBBY_POS.x + 0.5, LOBBY_POS.y + 1, LOBBY_POS.z + 0.5);
+  p.sendMessage("\\gold\\Welcome to the Bridge Practice server!");
+  p.sendMessage("\\yellow\\Right-click YELLOW wool for Time mode, \\aqua\\right-click LIGHT BLUE wool for Clutch mode.");
+});
+
+game.on("playerQuit", (e) => {
+  freeSlot(e.player, e.player.getData());
+});
+
+// ---------------- SETUP ----------------
+
+game.on("scriptLoad", () => {
+  const namesToCheck = ["yellow_wool", "light_blue_wool", "stone", "sandstone"];
+  for (let i = 0; i < namesToCheck.length; i++) {
+    if (!game.blocks.exists(namesToCheck[i])) {
+      console.log("WARNING: block '" + namesToCheck[i] + "' not found on this planet — adjust the script.");
+    }
+  }
+  const itemsToCheck = ["green_dye", "red_dye", "compass", "sandstone", "diamond_pickaxe"];
+  for (let i = 0; i < itemsToCheck.length; i++) {
+    if (!game.items.exists(itemsToCheck[i])) {
+      console.log("WARNING: item '" + itemsToCheck[i] + "' not found on this planet — adjust the script.");
+    }
+  }
+
+  buildLobby();
+
+  if (!game.storage.get("arenasBuilt", false)) {
+    queueAllBuilds();
+  }
+  game.every(0.1, processBuildQueue);
 });
