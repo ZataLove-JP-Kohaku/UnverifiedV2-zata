@@ -277,25 +277,25 @@ function openClutchSettingsGui(p) {
   }
 
   const items = [
-    { slot: 1, item: "redstone", name: "\\red\\-0.1", onClick: adjust("backKnockback", -0.1, 0.1, 3.0, true) },
+    { slot: 1, item: "red_stained_glass", name: "\\red\\-0.1", onClick: adjust("backKnockback", -0.1, 0.1, 3.0, true) },
     { slot: 4, item: "feather", name: "\\gold\\Back Knockback", lore: [draft.backKnockback.toFixed(1)], enabled: false },
-    { slot: 7, item: "emerald", name: "\\green\\+0.1", onClick: adjust("backKnockback", 0.1, 0.1, 3.0, true) },
+    { slot: 7, item: "green_stained_glass", name: "\\green\\+0.1", onClick: adjust("backKnockback", 0.1, 0.1, 3.0, true) },
 
-    { slot: 10, item: "redstone", name: "\\red\\-1 block", onClick: adjust("upKnockback", -1, 1, 15, false) },
+    { slot: 10, item: "red_stained_glass", name: "\\red\\-1 block", onClick: adjust("upKnockback", -1, 1, 15, false) },
     { slot: 13, item: "feather", name: "\\gold\\Up Knockback", lore: [draft.upKnockback + " blocks"], enabled: false },
-    { slot: 16, item: "emerald", name: "\\green\\+1 block", onClick: adjust("upKnockback", 1, 1, 15, false) },
+    { slot: 16, item: "green_stained_glass", name: "\\green\\+1 block", onClick: adjust("upKnockback", 1, 1, 15, false) },
 
-    { slot: 19, item: "redstone", name: "\\red\\-5 ticks", onClick: adjust("delayTicks", -5, 0, 100, false) },
+    { slot: 19, item: "red_stained_glass", name: "\\red\\-5 ticks", onClick: adjust("delayTicks", -5, 0, 100, false) },
     { slot: 22, item: "clock", name: "\\gold\\Hit Delay", lore: [draft.delayTicks + " ticks"], enabled: false },
-    { slot: 25, item: "emerald", name: "\\green\\+5 ticks", onClick: adjust("delayTicks", 5, 0, 100, false) },
+    { slot: 25, item: "green_stained_glass", name: "\\green\\+5 ticks", onClick: adjust("delayTicks", 5, 0, 100, false) },
 
-    { slot: 28, item: "redstone", name: "\\red\\-1", onClick: adjust("comboCount", -1, 1, 10, false) },
+    { slot: 28, item: "red_stained_glass", name: "\\red\\-1", onClick: adjust("comboCount", -1, 1, 10, false) },
     { slot: 31, item: "gunpowder", name: "\\gold\\Hit Count", lore: [String(draft.comboCount)], enabled: false },
-    { slot: 34, item: "emerald", name: "\\green\\+1", onClick: adjust("comboCount", 1, 1, 10, false) },
+    { slot: 34, item: "green_stained_glass", name: "\\green\\+1", onClick: adjust("comboCount", 1, 1, 10, false) },
 
-    { slot: 37, item: "redstone", name: "\\red\\-5 ticks", onClick: adjust("cooldownTicks", -5, 5, 200, false) },
+    { slot: 37, item: "red_stained_glass", name: "\\red\\-5 ticks", onClick: adjust("cooldownTicks", -5, 5, 200, false) },
     { slot: 40, item: "clock", name: "\\gold\\Cooldown", lore: [draft.cooldownTicks + " ticks"], enabled: false },
-    { slot: 43, item: "emerald", name: "\\green\\+5 ticks", onClick: adjust("cooldownTicks", 5, 5, 200, false) },
+    { slot: 43, item: "green_stained_glass", name: "\\green\\+5 ticks", onClick: adjust("cooldownTicks", 5, 5, 200, false) },
 
     { slot: 47, item: "barrier", name: "\\red\\Cancel", onClick: (ctx) => {
         ctx.player.sendMessage("\\gray\\Cancelled.");
