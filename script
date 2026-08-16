@@ -1,532 +1,267 @@
-// ============================================================
-// Bridge Practice Server (Zeqa-style) — "time" mode + "clutch" mode
-// ============================================================
-// Assumptions (validate/adjust if your item/block catalog differs):
-//   blocks: "stone", "sandstone"
-//   items:  "light_blue_wool" (Clutch selector), "yellow_wool" (Time selector),
-//           "green_dye", "red_dye", "compass", "sandstone", "diamond_pickaxe"
-//   enchant id: "efficiency"
-// scriptLoad logs a warning if any of these don't exist on this planet.
-//
-// NOTE: the text markup only documents color/bold/italic/underline/glow/reset —
-// there's no dedicated "bigger text" tag, so "少しでかく" is approximated with \bold\.
-// NOTE: game.scoreboard.set() is a single server-wide sidebar (no per-viewer API
-// documented), so "Personal Best" / "Time" reflect whichever time-mode player most
-// recently finished a run — it can't truly be a different view per player.
+// ======================================================================
+// クロスボウ (Crossbow) スクリプト
+// ・普通の状態(cbow:crossbow)を右クリック長押しすると装填アニメーションが始まる
+//   0.5秒ごとに pulling_0 → pulling_1 → pulling_2 と見た目が変わり、
+//   1.5秒経過すると装填完了(cbow:crossbow_loaded)になる
+// ・装填完了した瞬間に矢を1本消費する（クリエイティブは消費しない）
+// ・矢がない状態(サバイバル/アドベンチャー)では装填完了できず、普通の状態に戻る
+// ・途中で右クリックをやめるとキャンセル(普通の状態に戻る、矢は消費されない)
+// ・矢セット状態でもう一度右クリックすると、視線方向に矢を発射
+// ・発射後は0.5秒のクールダウン(連打で矢が連発しないように)
+// ・地面に刺さった矢に近づくと自動で拾える(アイテムとして手に入る)
+// ======================================================================
 
-// ---------------- CONFIG ----------------
+const CHARGE_TIME_MS = 1500;      // 装填完了までの時間
+const PULL1_TIME_MS = 500;        // pulling_1に切り替わるタイミング
+const PULL2_TIME_MS = 1000;       // pulling_2に切り替わるタイミング
+const FIRE_COOLDOWN_MS = 500;     // 発射後のクールダウン
+const RELEASE_TIMEOUT_MS = 350;   // これだけ合図が来なかったら「離した」と判定
+const CHECK_INTERVAL_SEC = 0.1;   // 装填チェックの間隔(秒)
+const ARROW_SPEED = 3.0;          // 矢の初速
+const EYE_HEIGHT = 1.6;           // 目線の高さ
 
-const LOBBY_POS = { x: 0, y: 65, z: 0 };
+const PICKUP_RADIUS = 1.0;        // 矢を拾える距離
+const PICKUP_SCAN_SEC = 0.25;     // 矢の着地/回収チェック間隔
+const ARROW_TRACK_TIMEOUT_MS = 60000; // これ以上経ったら追跡をやめる(ワールドのゴミにしない)
 
-const CLUTCH_BASE_X = 0, CLUTCH_BASE_Z = 2000, CLUTCH_Y = 100;
-const CLUTCH_SPACING = 40;
-const CLUTCH_COLS = 6;
-const CLUTCH_SLOTS = 24;
+// アイテムID (namespace:item 形式)
+const ITEM_STANDBY = "cbow:crossbow";
+const ITEM_PULL0 = "cbow:crossbow_pulling_0";
+const ITEM_PULL1 = "cbow:crossbow_pulling_1";
+const ITEM_PULL2 = "cbow:crossbow_pulling_2";
+const ITEM_LOADED = "cbow:crossbow_loaded";
 
-const TIME_BASE_X = 0, TIME_BASE_Z = -2000, TIME_Y = 100;
-const TIME_SPACING = 50;       // spacing between pair columns
-const TIME_GAP = 30;           // distance from island A to island B (along -Z)
-const TIME_ROW_SPACING = TIME_GAP + 40; // spacing between pair rows, keeps bridges clear of each other
-const TIME_COLS = 4;
-const TIME_PAIRS = 16;
+// スプライトキー (namespace:key 形式)
+const SPRITE_STANDBY = "cbow:crossbow_standby";
+const SPRITE_PULL0 = "cbow:crossbow_pulling_0";
+const SPRITE_PULL1 = "cbow:crossbow_pulling_1";
+const SPRITE_PULL2 = "cbow:crossbow_pulling_2";
+const SPRITE_ARROW = "cbow:crossbow_arrow";
 
-const VOID_MARGIN = 15;    // blocks below island Y that trigger a safety teleport
-const ISLAND_RADIUS = 3.5; // "on island" detection radius
+// data URL化した画像(すべてRGBA変換済み)
+const TEX_STANDBY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAACHklEQVR4nIWSwUuaYRzHP4+YQqFTEW0VKBUyO7wrdpCdPPQaBNPDrtt92m3ngYHQ/gE7bMed2thpHrYd3u5tDAqH70bTYcMim7yRUes14dlB3ndqbftef8/nw+/58hNSSqwUCgVevnrLvzLr3JXVbkwA6JUtRCTg4u7SfeLxOPl8HoBUKsX+wakNWHCtdcHirRvUWybVbkzolS2c1nB1dZVQKCR1XUfTNJFW/HJxzgt4qR2ZAESDbuotc2Aj5+j4AhsbGySTSZnL5QSAqqoye/snT998tx8en3eRPkVMTnjk/sGpsAV6ZQsAXdcBSCt+G24YJoAYHV8AFwzDACI+l2BywoOmaaiqKu8Fv/H6k0FgtPe7cuMMQGQePJLa5scBeKCDtOKXi0NwNOgGYDm7JovrLwZgKw6A/YNTokE37z+fWGvbhS1n13j37Annh9vy/HD7esGsc1fOhNz8ODZ5vHRTlBtnA3A06EaZGgO4InEMG5+Xx1GmxkQ/XG+Zf5XYgtqRifQp4ov+gWjyoVxZWbE36ZeEvSNk5gNYEgf0Lmwm1CtMVVVZLBYFwJ7RuSJJTHso7Rj2dYq04pfW8FfoDpqmXWk7EnDJsHeExLSHesuk2e7QbF8CCEe1GxObX0+otS4YPhIre0ZHJKY9orRj0Gx3CHtdZOYDANIBIH2KkD7lWrg/mfmAaLYviQbdlHYMgD+H9L9ohxGrONHXgfgNyVUEE3LjNEEAAAAASUVORK5CYII=";
+const TEX_ARROW = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAACHElEQVR4nH2STU9TQRSGn2lKb6ChrfUK5SNSAyFO1abEGHSNZaVd+EOa8Ae66MK9O924RZfWxJjoylXVoKWmveFL0fQDCrlYmqKXkowLvBNLqe9mJjPzPnPekyOUUrjKZrM8e/6K/2nGu642T2YFQLmUR0yFfdxZfICUkkwmA0AymaRaa2mDa97a/83C1SDb+w6bJ7OiXMrjdS8zmYwCSKfTmKYpBhsraiEWAAJsNRwAoqbB9r7TVZF3KDLH8vIyAGtra0gpsSxLLSUv8/DFV/3w4OgEFYqLifFhVa21hAaUS3ncn6WUtFYfIf1NHr9xqNgOgBiKzFHeyOt4XRXErt1mYnwYQFiWpaS/yWQkSN3eI46fYqWtyqW8cM1SSqq1DxrgcTeDjRV1z9xg+5vDx/Iet2KXMIKCVCJM9KKh6CMPQLXWImoavP7SpFhp4zSVhtQ7xxqy8end+YAZ77qaHjH4ceCwtDgmipU2YwO+HgjQU4nn7MGTYoT4pF/kCva5ECklRzufewFbDQcViguA3KpNKhHugoyFfdQ7x1iWRSoR1hAPnE7Y9IgBnI4nwNudKcwrNzSkbh/TbHeQUpIr2DqKuB+/oNwJ+zVyEwApZVesv8Ol1/cvn7J72AEQQsbmET+LCtARzupu5DsAuYKtRgMDjAZ8RE2DXME+jaBCcdHPDGB5rgOQSoTF7mFHmwGEjM338/Xon+67PRB/AL7v9se92d1lAAAAAElFTkSuQmCC";
+const TEX_PULL0 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAACN0lEQVR4nIWSwUobURSGvz/EhCpJYxiiVWmCFelkMbV0IV25SCII1UWfQhezcC0oCPoCbuwT2NKVLmoX072WFiXFSbFGYolibBhpgtaJgdtFOtHE0p7t/c/h3O+/SkTwtLi4yOs37/iXhvz7clAfVgD23hYqHg3wfPwluq4zPz8PQCaT4fik2jR45nz5itTj+xTKLgf1YWXvbeH3hgsLC8RiMbFtG03T1L2zz5JKhoEw+TMXgIQWpFB2Wxr5O3ufsra2xtjYmMzMzCiAdDots5mHLK8fNh+eX9aRiKH6+0JyfFJVAEopfPbeFgC2bQMwaXTL7JMfLK8fUnRcio6rnEBSScRQOXv7DhOlJ0fp7wthWRbpdFpeaN94+8kh2tnYLlu8AFBHTg3TNMX68FF55py9fcNg0uiWVJs5oQW9EDFNk9tmTz6A45MqCS3I+y8/KTqtwBJaEGOgC13XuTzdaTGLSCNgyL8vj2JBvp+7zI4/UNniRdNcKLtMTC+xuToHIO0hvvZKr7K9GANdzZCJ6SVyuVyzSXtIk0H+zMUjnQNM00TXdTZX51rWKVVqjA6G2NjduQnIl69IJcNYp40w0zRlZWVFAcSjAbnNpGF2BGjcwqTRLd7wV+wZAJZltdCORwPSE+5gdDBEoexSqtQoVa4BlP+gPqzyX7MCIPXqX4/lyKmpqZEoG7uO9IQ76AkHmk18ABIxlESMO3/crqmRqCpVrkloQTZ2nVaI/5N1GvfuQP1hAKB+AwA3CkV6VBaQAAAAAElFTkSuQmCC";
+const TEX_PULL1 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAACP0lEQVR4nIWSwUobURSGvysxoZGkMQzRqtRgi3RSmLYUmnYlNBPBhV30KXSRhWtBQdAXcGOfwJaudFG7SPdWWiIpTqAasSUJiQ1jGzF1VDhdxBkj2vZfXe69/3/P+c5VIoKrubk5Xr95x7901/dVds6GFYC1tY4ajPp5NvoSXdeZmZkBIJ1OU64cegbXXKwfk7p3k726w87ZsLK21vG5h7Ozs8RiMbEsC03T1I39z5JKhIEwxX0HgLgWYK/uXKrIF+x9xPLyMiMjIzI5OakATNOUqfRtFlZ2vYsHzTMkYqj+vpCUK4cKQClFh7W1DoBlWQCMG90y9eAHCyu7lGyHku0o259QEjFUwfp4hYkvcf8p/X0hstmsMk1TUto2Cyu7RIM+okEf+dKRNKs59c0+AUDXdcqVjYsAdzFudEtK2+btJ5to0Of1DJAvHYmeSCoz9USyHzZUewUdAOXKIXEtwPsvvyjZl4HFtQDGQBfNak50Xb/SQoc7qjuxAN8PHKZGb6l86cgzt4cANKs5zywirYB2vcr3Ygx0XQkZm5hnbWkaQNpDPAbFfQeXdKG1pQABGJuYp1AoENcC1BonJIdCrG7mLgKK9WNSiTDZ6kUlmUzG63ltadqrpGW25fwB1LjRLe7h79hjb1SLi4se7cGoX3rCnSSHQuzVHWqNE2qNUwCl9EQS9TMvAH/7LACZ572sbtrSE+6kJ+wnrgVY3bRbECViKIkY6lpnm148jKpa49QzX4L4P2Wrg+4I1TkDAPUHeiz/3yKM55MAAAAASUVORK5CYII=";
+const TEX_PULL2 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAACFElEQVR4nIWSQUsbURSFvyvThEZM4zBEq1IFRfpSmFq6sF0JNXFVXfRfuOjCP6Dgwv/QTbdWujKF0kV+gJaWhJTMgBrRkoRow9gqpo4Kr4swY1K1PZt3efedwz3nPtFaE2B5eZl3ax/5F8aMLb1zOS4ATmkDGTYjPJ95hVKKxcVFADKZDNXaSUgIyOXGGdMP77HX8Nm5HBentIERNJeWlkgmk9pxHCzLkruHX/V0Kg7EKR/6AIxYUfYafsdERqz/Caurq0xNTen5+XkBSKfTeiHzgJX13fDhUfMSnbBlcKBHV2snAiAidDmlDQAcxwFg1u7VC49/sLK+S8XzqXi+eJGU6IQtrrN5LRMj9egZgwM95HI5SafTetraZmV9FzNmYMYMipVT3aznZd87B0ApRbX2ORToCopZu1e/tLZ5/8XDjBmhZ3uoG0Cr1OSNW+kCqNZOGLGifPr2i4rXGVgg0qzn9a0CY8aWHk1G+X7kszBzX4qV05DcLjJsRjpEtNZXFgK8KfZjD3XfKqKUolnPX4UYFOVDnyBpt3UlgP7bjuu6zE2YZAv5Kwvlxhmjyeg1f/ve+bVJlFJkC15oRWbtXh00fyefAq1VtUMpheu64bn54S0HxxcAIio1ifwsaoDbPgvA6xf9ZAue7ovfoS8eYcSKki14LQs6YYtO2HIjsw1zE6YcHF+E5I4Q/4dcfThIX9oykD/1T/SqL8UTlgAAAABJRU5ErkJggg==";
 
-// Knockback is always along the Z axis (never based on player look direction),
-// and always toward POSITIVE Z.
-const CLUTCH_KB_Z_DIRECTION = 1;
+// ---- アイテム登録 ----
+game.mods.register({
+  sprites: {
+    [SPRITE_STANDBY]: TEX_STANDBY,
+    [SPRITE_PULL0]: TEX_PULL0,
+    [SPRITE_PULL1]: TEX_PULL1,
+    [SPRITE_PULL2]: TEX_PULL2,
+    [SPRITE_ARROW]: TEX_ARROW,
+  },
+  items: [
+    { name: ITEM_STANDBY, displayName: "Crossbow", template: "generic", layers: [{ texture: SPRITE_STANDBY, tint: 16777215 }] },
+    { name: ITEM_PULL0, displayName: "Crossbow", template: "generic", layers: [{ texture: SPRITE_PULL0, tint: 16777215 }] },
+    { name: ITEM_PULL1, displayName: "Crossbow", template: "generic", layers: [{ texture: SPRITE_PULL1, tint: 16777215 }] },
+    { name: ITEM_PULL2, displayName: "Crossbow", template: "generic", layers: [{ texture: SPRITE_PULL2, tint: 16777215 }] },
+    { name: ITEM_LOADED, displayName: "Crossbow", template: "generic", layers: [{ texture: SPRITE_ARROW, tint: 16777215 }] },
+  ],
+});
 
-// Approximate gravity (blocks/tick^2) used to convert a desired peak height in
-// BLOCKS into an initial vertical launch velocity, so the "up knockback" setting
-// is calibrated in something a player can reason about instead of a raw velocity
-// number that swings wildly with tiny changes.
-const CLUTCH_GRAVITY = 0.08;
-function heightToVelocity(blocks) {
-  return Math.sqrt(2 * CLUTCH_GRAVITY * blocks);
+// ---- プレイヤーごとの状態ヘルパー ----
+function getState(p) {
+  return p.getData() || {};
+}
+function setState(p, state) {
+  p.setData(state);
 }
 
-const DEFAULT_CLUTCH_SETTINGS = {
-  backKnockback: 1.2,
-  upKnockback: 5, // blocks of peak height, not a raw velocity
-  delayTicks: 20,
-  comboCount: 3,
-  cooldownTicks: 40,
-};
+// ---- 装填チェックのループ（自分自身をスケジュールし続ける） ----
+function scheduleChargeCheck(playerName, chargeStartTime) {
+  game.after(CHECK_INTERVAL_SEC, () => {
+    const p = game.getPlayer(playerName);
+    if (!p) return;
 
-// Timer must be crossed moving in the -Z direction; the finish line sits a fixed
-// offset before the spawn point (matches TIME_BASE_Z - 20 = -2020, TIME_Y - 5 = 95
-// for the first island pair) and generalizes the same way for every other pair.
-const TIME_FINISH_Z_OFFSET = 20;
-const TIME_FINISH_MIN_Y = TIME_Y - 5;
+    const state = getState(p);
+    if (!state.charging) return;
 
-// ---------------- RUNTIME STATE (in-memory, per script instance) ----------------
-
-let clutchOccupancy = {}; // slotIndex -> uuid
-let timeOccupancy = {};   // pairIndex -> uuid
-let buildQueue = [];
-
-// ---------------- LAYOUT HELPERS ----------------
-
-function clutchIslandPos(i) {
-  const col = i % CLUTCH_COLS;
-  const row = Math.floor(i / CLUTCH_COLS);
-  return { x: CLUTCH_BASE_X + col * CLUTCH_SPACING, y: CLUTCH_Y, z: CLUTCH_BASE_Z + row * CLUTCH_SPACING };
-}
-
-function timeIslandPair(i) {
-  const col = i % TIME_COLS;
-  const row = Math.floor(i / TIME_COLS);
-  const baseX = TIME_BASE_X + col * TIME_SPACING;
-  const baseZ = TIME_BASE_Z - row * TIME_ROW_SPACING;
-  return {
-    a: { x: baseX, y: TIME_Y, z: baseZ },
-    b: { x: baseX, y: TIME_Y, z: baseZ - TIME_GAP },
-  };
-}
-
-// ---------------- BUILDING ----------------
-
-function buildLobby() {
-  game.world.fill(LOBBY_POS.x - 5, LOBBY_POS.y - 1, LOBBY_POS.z - 5, LOBBY_POS.x + 5, LOBBY_POS.y - 1, LOBBY_POS.z + 5, "stone");
-}
-
-function buildClutchIsland(i) {
-  const pos = clutchIslandPos(i);
-  game.world.fill(pos.x - 2, pos.y, pos.z - 2, pos.x + 2, pos.y, pos.z + 2, "stone");
-}
-
-function buildTimeIslandPair(i) {
-  const pair = timeIslandPair(i);
-  game.world.fill(pair.a.x - 2, pair.a.y, pair.a.z - 2, pair.a.x + 2, pair.a.y, pair.a.z + 2, "sandstone");
-  game.world.fill(pair.b.x - 2, pair.b.y, pair.b.z - 2, pair.b.x + 2, pair.b.y, pair.b.z + 2, "sandstone");
-}
-
-function queueAllBuilds() {
-  for (let i = 0; i < CLUTCH_SLOTS; i++) buildQueue.push({ type: "clutch", index: i });
-  for (let i = 0; i < TIME_PAIRS; i++) buildQueue.push({ type: "time", index: i });
-}
-
-function processBuildQueue() {
-  for (let n = 0; n < 2 && buildQueue.length > 0; n++) {
-    const job = buildQueue.shift();
-    if (job.type === "clutch") buildClutchIsland(job.index);
-    else buildTimeIslandPair(job.index);
-  }
-  if (buildQueue.length === 0) {
-    game.storage.set("arenasBuilt", true);
-  }
-}
-
-// ---------------- SLOT ASSIGNMENT ----------------
-
-function assignClutchSlot(p) {
-  for (let i = 0; i < CLUTCH_SLOTS; i++) {
-    if (!clutchOccupancy[i]) {
-      clutchOccupancy[i] = p.uuid;
-      return i;
+    const held = p.getHeldItem();
+    const currentItem = held ? held.item : null;
+    // 装填中に持てるはずのアイテム以外に変わっていたら、離した/キャンセル扱い
+    const chargingItems = [ITEM_STANDBY, ITEM_PULL0, ITEM_PULL1, ITEM_PULL2];
+    if (!currentItem || chargingItems.indexOf(currentItem) === -1) {
+      state.charging = false;
+      setState(p, state);
+      return;
     }
-  }
-  return null;
-}
 
-function assignTimeSlot(p) {
-  for (let i = 0; i < TIME_PAIRS; i++) {
-    if (!timeOccupancy[i]) {
-      timeOccupancy[i] = p.uuid;
-      return i;
+    const now = Date.now();
+    const lastSeen = state.lastSeen || chargeStartTime;
+
+    // 一定時間、合図(useItem)が来ていなければ「離した」と判断してキャンセル
+    if (now - lastSeen > RELEASE_TIMEOUT_MS) {
+      state.charging = false;
+      if (currentItem !== ITEM_STANDBY) p.setHeldItem(ITEM_STANDBY, 1);
+      setState(p, state);
+      return;
     }
-  }
-  return null;
-}
 
-function freeSlot(p, d) {
-  d = d || {};
-  if (d.mode === "clutch" && d.clutchSlot !== undefined) {
-    if (clutchOccupancy[d.clutchSlot] === p.uuid) delete clutchOccupancy[d.clutchSlot];
-  } else if (d.mode === "time" && d.timePair !== undefined) {
-    if (timeOccupancy[d.timePair] === p.uuid) delete timeOccupancy[d.timePair];
-  }
-}
+    const elapsed = now - chargeStartTime;
 
-// ---------------- LOBBY ITEMS ----------------
+    // 経過時間に応じて見た目を切り替える
+    if (elapsed >= CHARGE_TIME_MS) {
+      // 装填完了！矢があるかチェック
+      const isCreative = p.isCreative();
+      const hasArrow = isCreative || p.countItem("arrow") >= 1;
 
-function giveLobbyItems(p) {
-  p.give("light_blue_wool", 1, { name: "\\cyan\\clutch" });
-  p.give("yellow_wool", 1, { name: "\\yellow\\Time" });
-}
-
-// ---------------- MODE TRANSITIONS ----------------
-
-function returnToLobby(p) {
-  freeSlot(p, p.getData());
-  p.setData({ mode: "lobby" });
-  p.setGameMode("survival");
-  game.runCommand("clear " + p.name);
-  giveLobbyItems(p);
-  p.teleport(LOBBY_POS.x + 0.5, LOBBY_POS.y + 1, LOBBY_POS.z + 0.5);
-  p.sendMessage("\\gray\\Returned to lobby.");
-}
-
-function enterClutchMode(p) {
-  freeSlot(p, p.getData());
-  const slot = assignClutchSlot(p);
-  if (slot === null) {
-    p.sendMessage("\\red\\All clutch islands are full right now, try again soon.");
-    return;
-  }
-  const pos = clutchIslandPos(slot);
-  p.setData({ mode: "clutch", clutchSlot: slot, clutchRunning: false });
-  p.setGameMode("survival");
-  game.runCommand("clear " + p.name);
-  p.give("green_dye", 1, { name: "\\green\\Start Clutch" });
-  p.give("compass", 1, { name: "\\aqua\\Clutch Settings" });
-  p.give("red_dye", 1, { name: "\\red\\Return to Lobby" });
-  p.teleport(pos.x + 0.5, pos.y + 1, pos.z + 0.5);
-  p.sendMessage("\\aqua\\Welcome to Clutch mode! Right-click the green dye to start a run.");
-}
-
-function enterTimeMode(p) {
-  freeSlot(p, p.getData());
-  const pairIndex = assignTimeSlot(p);
-  if (pairIndex === null) {
-    p.sendMessage("\\red\\All time islands are full right now, try again soon.");
-    return;
-  }
-  const pair = timeIslandPair(pairIndex);
-  p.setData({ mode: "time", timePair: pairIndex, timerRunning: false, timerStart: null });
-  p.setGameMode("survival");
-  game.runCommand("clear " + p.name);
-  // Slots 1 & 2: two 64-stacks of sandstone = 128 total.
-  p.give("sandstone", 64);
-  p.give("sandstone", 64);
-  p.give("diamond_pickaxe", 1, { enchants: [{ id: "efficiency", level: 30 }] });
-  p.give("red_dye", 1, { name: "\\red\\Return to Lobby" });
-  p.teleport(pair.a.x + 0.5, pair.a.y + 1, pair.a.z + 0.5);
-  p.sendMessage("\\aqua\\Bridge in the -Z direction to the other island! Leave spawn to start the timer.");
-}
-
-// ---------------- CLUTCH PRACTICE ----------------
-
-function startClutchPractice(p) {
-  const d = p.getData() || {};
-  if (d.mode !== "clutch") return;
-  if (d.clutchRunning) {
-    p.sendMessage("\\red\\A clutch run is already in progress!");
-    return;
-  }
-  const settings = game.playerData.get(p.uuid, "clutchSettings", DEFAULT_CLUTCH_SETTINGS);
-  d.clutchRunning = true;
-  d.clutchHitsLeft = settings.comboCount;
-  p.setData(d);
-  p.sendMessage("\\yellow\\Clutch practice starting...");
-  scheduleClutchHit(p.name, settings);
-}
-
-function scheduleClutchHit(playerName, settings) {
-  game.after(game.util.ticksToSeconds(settings.delayTicks), () => {
-    const cur = game.getPlayer(playerName);
-    if (!cur) return;
-    const d = cur.getData() || {};
-    if (!d.clutchRunning) return;
-
-    // Always +Z, never based on where the player is looking.
-    cur.launch(0, heightToVelocity(settings.upKnockback), CLUTCH_KB_Z_DIRECTION * settings.backKnockback);
-
-    d.clutchHitsLeft = (d.clutchHitsLeft || 1) - 1;
-    cur.setData(d);
-
-    if (d.clutchHitsLeft > 0) {
-      game.after(game.util.ticksToSeconds(settings.cooldownTicks), () => scheduleClutchHit(playerName, settings));
-    } else {
-      const finalD = cur.getData() || {};
-      finalD.clutchRunning = false;
-      cur.setData(finalD);
-      cur.sendMessage("\\green\\Clutch practice complete! Right-click the green dye to go again.");
+      if (hasArrow) {
+        if (!isCreative) p.removeItem("arrow", 1); // ここで矢を消費
+        p.setHeldItem(ITEM_LOADED, 1);
+        state.loaded = true;
+      } else {
+        // 矢切れ：装填できないので普通の状態に戻す
+        p.setHeldItem(ITEM_STANDBY, 1);
+        p.sendMessage("\\red\\矢がありません！");
+      }
+      state.charging = false;
+      setState(p, state);
+      return;
+    } else if (elapsed >= PULL2_TIME_MS) {
+      if (currentItem !== ITEM_PULL2) p.setHeldItem(ITEM_PULL2, 1);
+    } else if (elapsed >= PULL1_TIME_MS) {
+      if (currentItem !== ITEM_PULL1) p.setHeldItem(ITEM_PULL1, 1);
     }
+    // (0〜PULL1_TIME_MSの間はPULL0のまま。PULL0への切り替えは開始時に即座に行う)
+
+    // 次のチェックを予約して続行
+    scheduleChargeCheck(playerName, chargeStartTime);
   });
 }
 
-// ---------------- CLUTCH SETTINGS GUI ----------------
+// ---- 装填中のアイテムを右クリック：装填開始 or 継続の合図 ----
+function handleChargeUseItem(ctx) {
+  if (ctx.button !== "right") return;
+  ctx.cancel();
 
-function round1(n) { return Math.round(n * 10) / 10; }
+  const p = ctx.player;
+  const state = getState(p);
+  const now = Date.now();
 
-function valueItem(icon, label, value) {
-  return { item: icon, name: "\\gold\\" + label, lore: [String(value)], enabled: false };
+  if (!state.charging) {
+    // まだ装填中じゃなければ、ここが装填スタート
+    state.charging = true;
+    state.loaded = false;
+    state.chargeStart = now;
+    state.lastSeen = now;
+    setState(p, state);
+    p.setHeldItem(ITEM_PULL0, 1); // 押した瞬間にすぐ見た目を変える
+    scheduleChargeCheck(p.name, now);
+  } else {
+    // 押しっぱなしの間の合図 → 「まだ押してるよ」の印として時間を更新
+    state.lastSeen = now;
+    setState(p, state);
+  }
 }
 
-function openClutchSettingsGui(p) {
-  const stored = game.playerData.get(p.uuid, "clutchSettings", null) || DEFAULT_CLUTCH_SETTINGS;
-  const draft = Object.assign({}, DEFAULT_CLUTCH_SETTINGS, stored);
-  let menu;
+game.interactions.on("useItem", { item: ITEM_STANDBY }, handleChargeUseItem);
+game.interactions.on("useItem", { item: ITEM_PULL0 }, handleChargeUseItem);
+game.interactions.on("useItem", { item: ITEM_PULL1 }, handleChargeUseItem);
+game.interactions.on("useItem", { item: ITEM_PULL2 }, handleChargeUseItem);
 
-  function refresh() {
-    menu.setItem(4, valueItem("feather", "Back Knockback", draft.backKnockback.toFixed(1)));
-    menu.setItem(13, valueItem("feather", "Up Knockback", draft.upKnockback + " blocks"));
-    menu.setItem(22, valueItem("clock", "Hit Delay", draft.delayTicks + " ticks"));
-    menu.setItem(31, valueItem("gunpowder", "Hit Count", String(draft.comboCount)));
-    menu.setItem(40, valueItem("clock", "Cooldown", draft.cooldownTicks + " ticks"));
-  }
+// ---- トラッキング中の矢（着地判定・拾える判定用） ----
+const trackedArrows = {};
 
-  function adjust(field, delta, min, max, round) {
-    return () => {
-      const raw = draft[field] + delta;
-      draft[field] = game.util.clamp(round ? round1(raw) : Math.round(raw), min, max);
-      refresh();
+// ---- 「crossbow_loaded」を右クリック：発射処理 ----
+game.interactions.on("useItem", { item: ITEM_LOADED }, (ctx) => {
+  if (ctx.button !== "right") return;
+  if (!ctx.initialPress) return; // セミオート：新しく押した瞬間だけ反応
+  ctx.cancel();
+
+  const p = ctx.player;
+  const state = getState(p);
+  const now = Date.now();
+
+  // クールダウン中は無視
+  if (state.cooldownUntil && now < state.cooldownUntil) return;
+
+  const look = p.getLook();
+  const originX = p.pos.x;
+  const originY = p.pos.y + EYE_HEIGHT;
+  const originZ = p.pos.z;
+
+  const arrowId = game.world.spawnEntity(
+    originX, originY, originZ,
+    "arrow",
+    look.x * ARROW_SPEED,
+    look.y * ARROW_SPEED,
+    look.z * ARROW_SPEED,
+    p
+  );
+
+  // 拾えるように追跡リストに登録
+  if (arrowId) {
+    trackedArrows[arrowId] = {
+      lastPos: { x: originX, y: originY, z: originZ },
+      landed: false,
+      stillCount: 0,
+      spawnTime: now,
     };
   }
 
-  const items = [
-    { slot: 1, item: "red_stained_glass", name: "\\red\\-0.1", onClick: adjust("backKnockback", -0.1, 0.1, 3.0, true) },
-    { slot: 4, item: "feather", name: "\\gold\\Back Knockback", lore: [draft.backKnockback.toFixed(1)], enabled: false },
-    { slot: 7, item: "green_stained_glass", name: "\\green\\+0.1", onClick: adjust("backKnockback", 0.1, 0.1, 3.0, true) },
+  // 矢は装填時にもう消費済みなので、ここでは消費しない
+  p.setHeldItem(ITEM_STANDBY, 1);
 
-    { slot: 10, item: "red_stained_glass", name: "\\red\\-1 block", onClick: adjust("upKnockback", -1, 1, 15, false) },
-    { slot: 13, item: "feather", name: "\\gold\\Up Knockback", lore: [draft.upKnockback + " blocks"], enabled: false },
-    { slot: 16, item: "green_stained_glass", name: "\\green\\+1 block", onClick: adjust("upKnockback", 1, 1, 15, false) },
+  state.charging = false;
+  state.loaded = false;
+  state.cooldownUntil = now + FIRE_COOLDOWN_MS;
+  setState(p, state);
+});
 
-    { slot: 19, item: "red_stained_glass", name: "\\red\\-5 ticks", onClick: adjust("delayTicks", -5, 0, 100, false) },
-    { slot: 22, item: "clock", name: "\\gold\\Hit Delay", lore: [draft.delayTicks + " ticks"], enabled: false },
-    { slot: 25, item: "green_stained_glass", name: "\\green\\+5 ticks", onClick: adjust("delayTicks", 5, 0, 100, false) },
+// ---- 矢の着地判定＆拾い上げ処理（定期的に実行） ----
+game.every(PICKUP_SCAN_SEC, () => {
+  for (const id in trackedArrows) {
+    const rec = trackedArrows[id];
 
-    { slot: 28, item: "red_stained_glass", name: "\\red\\-1", onClick: adjust("comboCount", -1, 1, 10, false) },
-    { slot: 31, item: "gunpowder", name: "\\gold\\Hit Count", lore: [String(draft.comboCount)], enabled: false },
-    { slot: 34, item: "green_stained_glass", name: "\\green\\+1", onClick: adjust("comboCount", 1, 1, 10, false) },
-
-    { slot: 37, item: "red_stained_glass", name: "\\red\\-5 ticks", onClick: adjust("cooldownTicks", -5, 5, 200, false) },
-    { slot: 40, item: "clock", name: "\\gold\\Cooldown", lore: [draft.cooldownTicks + " ticks"], enabled: false },
-    { slot: 43, item: "green_stained_glass", name: "\\green\\+5 ticks", onClick: adjust("cooldownTicks", 5, 5, 200, false) },
-
-    { slot: 47, item: "barrier", name: "\\red\\Cancel", onClick: (ctx) => {
-        ctx.player.sendMessage("\\gray\\Cancelled.");
-        menu.close();
-      } },
-    { slot: 51, item: "emerald_block", name: "\\green\\Confirm", onClick: (ctx) => {
-        game.playerData.set(ctx.player.uuid, "clutchSettings", draft);
-        ctx.player.sendMessage("\\green\\Clutch settings saved!");
-        menu.close();
-      } },
-  ];
-
-  menu = game.gui.open(p, { title: "\\aqua\\Clutch Settings", rows: 6, items: items });
-}
-
-// ---------------- TIME MODE FORMATTING + SCOREBOARD ----------------
-
-function formatTimeComma(ms) {
-  // Seconds to 3 decimal places, comma as the fractional separator per spec.
-  return (ms / 1000).toFixed(3).replace(".", ",");
-}
-
-function blankLine(n) {
-  // Distinct near-invisible spacer lines (avoids duplicate-string collisions).
-  return "\\reset\\" + " ".repeat(n);
-}
-
-function buildTop3Lines() {
-  const top3 = game.stats.top("besttime", 3, { order: "asc" }); // lower ms = faster = better
-  const lines = [];
-  for (let i = 0; i < 3; i++) {
-    const entry = top3[i];
-    if (entry) {
-      lines.push("\\lime\\" + entry.name + "\\gray\\: \\yellow\\" + formatTimeComma(entry.value));
-    } else {
-      lines.push("\\lime\\---\\gray\\: \\yellow\\--,---");
+    // 追跡タイムアウト（ゴミにしないため）
+    if (Date.now() - rec.spawnTime > ARROW_TRACK_TIMEOUT_MS) {
+      delete trackedArrows[id];
+      continue;
     }
-  }
-  return lines;
-}
 
-function updateScoreboard(p) {
-  const bestMs = game.playerData.get(p.uuid, "bestTimeMs", null);
-  const lastMs = game.playerData.get(p.uuid, "lastTimeMs", null);
-
-  const lines = [];
-  lines.push("\\orange\\\\bold\\TOP3\\reset\\");
-  lines.push(...buildTop3Lines());
-  lines.push(blankLine(1));
-  lines.push("\\cyan\\\\bold\\Personal Best\\reset\\");
-  lines.push("\\yellow\\" + (bestMs !== null ? formatTimeComma(bestMs) : "--,---"));
-  lines.push(blankLine(2));
-  lines.push("\\lime\\\\bold\\Time\\reset\\");
-  lines.push("\\yellow\\" + (lastMs !== null ? formatTimeComma(lastMs) : "--,---"));
-
-  game.scoreboard.set("\\lime\\\\bold\\Fast Builder\\reset\\", lines);
-}
-
-// ---------------- INTERACTIONS ----------------
-
-game.interactions.on("useItem", { item: "light_blue_wool" }, (ctx) => {
-  ctx.cancel();
-  if (ctx.initialPress === false) return;
-  enterClutchMode(ctx.player);
-});
-
-game.interactions.on("useItem", { item: "yellow_wool" }, (ctx) => {
-  ctx.cancel();
-  if (ctx.initialPress === false) return;
-  enterTimeMode(ctx.player);
-});
-
-game.interactions.on("useItem", { item: "green_dye" }, (ctx) => {
-  ctx.cancel();
-  if (ctx.initialPress === false) return;
-  startClutchPractice(ctx.player);
-});
-
-game.interactions.on("useItem", { item: "compass" }, (ctx) => {
-  ctx.cancel();
-  if (ctx.initialPress === false) return;
-  const d = ctx.player.getData() || {};
-  if (d.mode === "clutch") openClutchSettingsGui(ctx.player);
-});
-
-game.interactions.on("useItem", { item: "red_dye" }, (ctx) => {
-  ctx.cancel();
-  if (ctx.initialPress === false) return;
-  returnToLobby(ctx.player);
-});
-
-// ---------------- BLOCK BREAK RESTRICTION (all modes) ----------------
-
-function resolveBreakPos(e) {
-  if (e.pos) return e.pos;
-  if (typeof e.x === "number") return { x: e.x, y: e.y, z: e.z };
-  return null;
-}
-
-game.on("blockBreak", (e) => {
-  let blockName = typeof e.block === "string" ? e.block : null;
-  if (!blockName) {
-    const pos = resolveBreakPos(e);
-    if (pos) blockName = game.world.getBlock(pos.x, pos.y, pos.z);
-  }
-  if (blockName !== "sandstone") {
-    e.cancel();
-  }
-});
-
-// ---------------- VOID SAFETY + TIME-MODE TIMER ----------------
-
-game.on("playerMove", (e) => {
-  const p = e.player;
-  const d = p.getData();
-  if (!d || !d.mode) return;
-
-  if (d.mode === "clutch") {
-    const pos = clutchIslandPos(d.clutchSlot);
-    if (p.pos.y < pos.y - VOID_MARGIN) {
-      p.teleport(pos.x + 0.5, pos.y + 1, pos.z + 0.5);
-      p.launch(0, 0.1, 0);
+    if (!game.entities.exists(id)) {
+      delete trackedArrows[id];
+      continue;
     }
-    return;
-  }
 
-  if (d.mode === "time") {
-    const pair = timeIslandPair(d.timePair);
+    const pos = game.entities.getPos(id);
+    if (!pos) {
+      delete trackedArrows[id];
+      continue;
+    }
 
-    // Void safety: fell off the bridge.
-    if (p.pos.y < pair.a.y - VOID_MARGIN) {
-      p.teleport(pair.a.x + 0.5, pair.a.y + 1, pair.a.z + 0.5);
-      p.launch(0, 0.1, 0);
-      if (d.timerRunning) {
-        d.timerRunning = false;
-        d.timerStart = null;
-        p.setData(d);
-        p.sendMessage("\\red\\You fell! Timer reset.");
+    if (!rec.landed) {
+      // 前回チェック時とほぼ同じ位置なら「着地した」と判定
+      const distSq = game.util.distanceSq(pos, rec.lastPos);
+      if (distSq < 0.0009) {
+        rec.stillCount++;
+        if (rec.stillCount >= 2) rec.landed = true; // 2回連続で静止 = 着地確定
+      } else {
+        rec.stillCount = 0;
       }
-      return;
+      rec.lastPos = pos;
     }
 
-    if (!d.timerRunning) {
-      // Only counts as "starting" when moving in the -Z direction.
-      if (p.pos.z < pair.a.z - ISLAND_RADIUS) {
-        d.timerRunning = true;
-        d.timerStart = Date.now();
-        p.setData(d);
-        p.sendMessage("\\yellow\\Timer started!");
+    if (rec.landed) {
+      const players = game.world.getPlayersNear(pos.x, pos.y, pos.z, PICKUP_RADIUS);
+      if (players && players.length > 0) {
+        players[0].give("arrow", 1);
+        game.entities.remove(id);
+        delete trackedArrows[id];
       }
-      return;
-    }
-
-    const finishZ = pair.a.z - TIME_FINISH_Z_OFFSET;
-    if (p.pos.z < finishZ && p.pos.y > TIME_FINISH_MIN_Y) {
-      const elapsedMs = Date.now() - d.timerStart;
-
-      d.timerRunning = false;
-      d.timerStart = null;
-      p.setData(d);
-
-      const timeStr = formatTimeComma(elapsedMs);
-      const titleMsg = "\\lime\\Time\\gray\\: \\yellow\\" + timeStr;
-      game.runCommand('title ' + p.name + ' title "' + titleMsg + '"');
-
-      game.playerData.set(p.uuid, "lastTimeMs", elapsedMs);
-      const prevBest = game.playerData.get(p.uuid, "bestTimeMs", null);
-      if (prevBest === null || elapsedMs < prevBest) {
-        game.playerData.set(p.uuid, "bestTimeMs", elapsedMs);
-        game.stats.set("besttime", p.uuid, elapsedMs, p.name);
-      }
-
-      updateScoreboard(p);
-
-      // Reset the player back onto island A with fresh supplies.
-      game.runCommand("clear " + p.name);
-      p.give("sandstone", 64);
-      p.give("sandstone", 64);
-      p.give("diamond_pickaxe", 1, { enchants: [{ id: "efficiency", level: 30 }] });
-      p.give("red_dye", 1, { name: "\\red\\Return to Lobby" });
-      p.teleport(pair.a.x + 0.5, pair.a.y + 1, pair.a.z + 0.5);
     }
   }
 });
 
-// fallback: never let void/fall damage actually land while in an arena
-game.on("entityDamage", (e) => {
-  const target = e.player || (e.entity && e.entity.isPlayer ? e.entity : null);
-  if (!target) return;
-  const d = target.getData();
-  if (d && (d.mode === "clutch" || d.mode === "time")) {
-    e.cancel();
+// ---- テスト用コマンド：/getcrossbow でクロスボウを1本もらえる ----
+game.commands.register("getcrossbow", { usage: "/getcrossbow" }, (sender) => {
+  const p = sender.player || sender;
+  if (p && p.give) {
+    p.give(ITEM_STANDBY, 1);
+    p.sendMessage("\\gold\\クロスボウを渡したよ！");
   }
-});
-
-// ---------------- JOIN / QUIT ----------------
-
-game.on("playerJoin", (e) => {
-  const p = e.player;
-  p.setData({ mode: "lobby" });
-  p.setGameMode("survival");
-  giveLobbyItems(p);
-  p.teleport(LOBBY_POS.x + 0.5, LOBBY_POS.y + 1, LOBBY_POS.z + 0.5);
-  p.sendMessage("\\gold\\Welcome to the Bridge Practice server!");
-  p.sendMessage("\\cyan\\Right-click clutch\\gray\\ / \\yellow\\Time\\gray\\ in your hotbar to pick a mode.");
-});
-
-game.on("playerQuit", (e) => {
-  freeSlot(e.player, e.player.getData());
-});
-
-// ---------------- SETUP ----------------
-
-game.on("scriptLoad", () => {
-  const blockNamesToCheck = ["stone", "sandstone"];
-  for (let i = 0; i < blockNamesToCheck.length; i++) {
-    if (!game.blocks.exists(blockNamesToCheck[i])) {
-      console.log("WARNING: block '" + blockNamesToCheck[i] + "' not found on this planet — adjust the script.");
-    }
-  }
-  const itemsToCheck = ["light_blue_wool", "yellow_wool", "green_dye", "red_dye", "compass", "sandstone", "diamond_pickaxe"];
-  for (let i = 0; i < itemsToCheck.length; i++) {
-    if (!game.items.exists(itemsToCheck[i])) {
-      console.log("WARNING: item '" + itemsToCheck[i] + "' not found on this planet — adjust the script.");
-    }
-  }
-
-  buildLobby();
-
-  if (!game.storage.get("arenasBuilt", false)) {
-    queueAllBuilds();
-  }
-  game.every(0.1, processBuildQueue);
 });
